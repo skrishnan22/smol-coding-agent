@@ -1,0 +1,15 @@
+# Reference checkouts
+/letta/
+/opencode/
+/opentui/
+/pi/
+
+# Local brainstorming artifacts
+/.superpowers/
+
+# Harness dependencies, builds, and secrets
+/node_modules/
+/dist/
+/.env
+/.env.*
+!/.env.example
