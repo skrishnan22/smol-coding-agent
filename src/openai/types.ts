@@ -43,9 +43,23 @@ export type UserInputMessage = {
  */
 export type ModelInputItem = UserInputMessage | Record<string, unknown>
 
+export type OpenAITool = {
+  type: "function"
+  name: string
+  description: string
+  parameters: {
+    type: "object"
+    properties: Record<string, unknown>
+    required: string[]
+    additionalProperties: false
+  }
+  strict: true
+}
+
 export type OpenAIRequestBody = {
   model: string
   input: readonly ModelInputItem[]
+  tools: readonly OpenAITool[]
   reasoning: { effort: "none" }
   store: false
   parallel_tool_calls: false

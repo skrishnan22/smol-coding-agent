@@ -4,6 +4,7 @@ import { useCallback, useRef, useState } from "react"
 import { createJsonlSink } from "./logging/jsonl.js"
 import { appendResponseOutput, appendUserMessage } from "./model-context.js"
 import { createOpenAIClient } from "./openai/client.js"
+import { listFunctionCalls } from "./openai/tools.js"
 import type { ModelInputItem, OpenAIClient, OpenAIWideEvent } from "./openai/types.js"
 
 export type TranscriptItem =
@@ -151,7 +152,42 @@ export function App({ client }: AppProps) {
       void client
         .respond(nextContext)
         .then((result) => {
+          setUsage((current) => ({
+            inputTokens: current.inputTokens + result.usage.inputTokens,
+            outputTokens: current.outputTokens + result.usage.outputTokens,
+            costUsd: current.costUsd + result.usage.estimatedCostUsd,
+          }))
+
+          const calls = listFunctionCalls(result.output)
+          if (calls.length > 1) {
+            nextId.current += 1
+            const errorItem: TranscriptItem = {
+              id: `local-${nextId.current}`,
+              kind: "error",
+              text: `Unsupported response: ${calls.length} function calls in one turn`,
+            }
+            setItems((current) => [...current, errorItem])
+            return
+          }
+
+          // Preserve provider output before interpreting it — these items are next-turn input.
           modelContext.current = appendResponseOutput(modelContext.current, result.output)
+
+          if (calls.length === 1) {
+            const call = calls[0]!
+            nextId.current += 1
+            const toolItem: TranscriptItem = {
+              id: `local-${nextId.current}`,
+              kind: "tool",
+              callId: call.callId,
+              name: call.name,
+              input: call.arguments,
+              status: "running",
+            }
+            setItems((current) => [...current, toolItem])
+            // Execution / function_call_output is the next checkpoint.
+            return
+          }
 
           nextId.current += 1
           const assistantItem: TranscriptItem = {
@@ -160,11 +196,6 @@ export function App({ client }: AppProps) {
             text: result.text,
           }
           setItems((current) => [...current, assistantItem])
-          setUsage((current) => ({
-            inputTokens: current.inputTokens + result.usage.inputTokens,
-            outputTokens: current.outputTokens + result.usage.outputTokens,
-            costUsd: current.costUsd + result.usage.estimatedCostUsd,
-          }))
         })
         .catch((cause: unknown) => {
           nextId.current += 1

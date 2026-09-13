@@ -29,7 +29,95 @@ function deferredResponse() {
 }
 
 
+test("a function_call shows a running tool card without executing", async () => {
+  const output = [
+    {
+      type: "function_call",
+      call_id: "call_read_1",
+      name: "read_file",
+      arguments: '{"path":"package.json"}',
+    },
+  ]
 
+  const client: OpenAIClient = {
+    respond: async () => ({
+      id: "resp_tool",
+      status: "completed",
+      text: "",
+      output,
+      usage: { inputTokens: 12, outputTokens: 8, estimatedCostUsd: 0.000012 },
+    }),
+  }
+
+  const screen = await testRender(<App client={client} />, { width: 80, height: 24 })
+  renderer = screen.renderer
+
+  await act(async () => {
+    await screen.mockInput.typeText("Read package.json")
+  })
+  await screen.flush()
+  await act(async () => {
+    screen.mockInput.pressEnter()
+    await Promise.resolve()
+  })
+  await screen.flush()
+
+  const frame = screen.captureCharFrame()
+  expect(frame).toContain("YOU")
+  expect(frame).toContain("Read package.json")
+  expect(frame).toContain("running  read_file")
+  expect(frame).toContain('{"path":"package.json"}')
+  expect(frame).toContain("input 12 · output 8 · $0.000012")
+  expect(frame).toContain("Ask the harness")
+  expect(frame).not.toContain("AI harness · running")
+  expect(frame).not.toContain("ASSISTANT")
+})
+
+test("multiple function_calls fail the turn without a tool card", async () => {
+  const output = [
+    {
+      type: "function_call",
+      call_id: "call_1",
+      name: "read_file",
+      arguments: '{"path":"a.txt"}',
+    },
+    {
+      type: "function_call",
+      call_id: "call_2",
+      name: "read_file",
+      arguments: '{"path":"b.txt"}',
+    },
+  ]
+
+  const client: OpenAIClient = {
+    respond: async () => ({
+      id: "resp_multi",
+      status: "completed",
+      text: "",
+      output,
+      usage: { inputTokens: 9, outputTokens: 6, estimatedCostUsd: 0.000009 },
+    }),
+  }
+
+  const screen = await testRender(<App client={client} />, { width: 80, height: 24 })
+  renderer = screen.renderer
+
+  await act(async () => {
+    await screen.mockInput.typeText("Read two files")
+  })
+  await screen.flush()
+  await act(async () => {
+    screen.mockInput.pressEnter()
+    await Promise.resolve()
+  })
+  await screen.flush()
+
+  const frame = screen.captureCharFrame()
+  expect(frame).toContain("ERROR")
+  expect(frame).toContain("Unsupported response: 2 function calls in one turn")
+  expect(frame).not.toContain("running  read_file")
+  expect(frame).toContain("Ask the harness")
+})
 
 test("renders the empty harness shell", async () => {
   const screen = await testRender(<App client={idleClient} />, { width: 80, height: 20 })

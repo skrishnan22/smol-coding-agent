@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
 import { createUserMessage } from "../src/model-context.js"
+import { READ_FILE_TOOL } from "../src/openai/tools.js"
 import { createOpenAIClient } from "../src/openai/client.js"
 import type { OpenAIFetch, OpenAIWideEvent } from "../src/openai/types.js"
 
@@ -52,6 +53,7 @@ test("sends one stateless Responses API request and parses its result", async ()
   expect(JSON.parse(String(receivedInit?.body))).toEqual({
     model: "gpt-5.6-luna",
     input,
+    tools: [READ_FILE_TOOL],
     reasoning: { effort: "none" },
     store: false,
     parallel_tool_calls: false,
@@ -88,7 +90,8 @@ test("sends one stateless Responses API request and parses its result", async ()
     request_body: {
       model: "gpt-5.6-luna",
       input,
-        reasoning: { effort: "none" },
+      tools: [READ_FILE_TOOL],
+      reasoning: { effort: "none" },
       store: false,
       parallel_tool_calls: false,
       max_output_tokens: 800,
