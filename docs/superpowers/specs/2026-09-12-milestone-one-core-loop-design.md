@@ -81,7 +81,7 @@ Each later learning milestone should be a focused Git commit. Earlier mechanics 
 
 - Bun 1.3 or newer runs the project, tests, and TypeScript directly.
 - `@opentui/core` and `@opentui/react` are pinned to version `0.5.11`, matching the inspected reference checkout.
-- React is pinned to version `19.2.0`, matching the inspected OpenTUI React package.
+- React is pinned to version `19.2.3`, matching the inspected OpenTUI React package.
 - The harness does not use the OpenAI SDK. Bun's built-in `fetch` sends and receives the protocol directly.
 - The API key comes only from the `OPENAI_API_KEY` process environment. The harness does not load a local `.env` file.
 

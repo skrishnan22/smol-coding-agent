@@ -7,6 +7,9 @@
 # Local brainstorming artifacts
 /.superpowers/
 
+# Local structured logs
+/.harness/
+
 # Harness dependencies, builds, and secrets
 /node_modules/
 /dist/
