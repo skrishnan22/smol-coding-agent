@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { createUserMessage } from "../src/model-context.js"
 import { createOpenAIClient } from "../src/openai/client.js"
 import type { OpenAIFetch, OpenAIWideEvent } from "../src/openai/types.js"
 
@@ -8,7 +9,7 @@ test("sends one stateless Responses API request and parses its result", async ()
   let receivedUrl = ""
   let receivedInit: RequestInit | undefined
   const events: OpenAIWideEvent[] = []
-  const input = [{ type: "message" as const, role: "user" as const, content: "Say hello" }]
+  const input = [createUserMessage("Say hello")]
 
   const fetch: OpenAIFetch = async (url, init) => {
     receivedUrl = String(url)
@@ -115,7 +116,7 @@ test("reports the provider error message for a failed HTTP response", async () =
     },
   })
 
-  await expect(client.respond([{ type: "message", role: "user", content: "hello" }])).rejects.toThrow(
+  await expect(client.respond([createUserMessage("hello")])).rejects.toThrow(
     "OpenAI request failed (401): Invalid API key",
   )
   expect(events).toHaveLength(1)
@@ -132,7 +133,7 @@ test("rejects a successful HTTP response with a malformed body", async () => {
   const fetch: OpenAIFetch = async () => Response.json({ id: "resp_123", output: [] })
   const client = createOpenAIClient({ apiKey: "test-key", fetch, log: ignoreLog })
 
-  expect(client.respond([{ type: "message", role: "user", content: "hello" }])).rejects.toThrow("Malformed OpenAI response")
+  expect(client.respond([createUserMessage("hello")])).rejects.toThrow("Malformed OpenAI response")
 })
 
 test("rejects a blank API key before making a request", () => {
