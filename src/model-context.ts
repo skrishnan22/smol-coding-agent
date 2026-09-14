@@ -1,4 +1,19 @@
-import type { ModelInputItem, UserInputMessage } from "./openai/types.js"
+import type { DeveloperInputMessage, ModelInputItem, UserInputMessage } from "./openai/types.js"
+
+export const DEVELOPER_GUIDANCE = [
+  "You are the model inside a minimal learning harness.",
+  "You may call the read_file tool to read UTF-8 text files under the process startup directory.",
+  "read_file accepts exactly { \"path\": string } as a relative path.",
+  "Prefer read_file when file contents are needed. Answer directly when they are not.",
+].join(" ")
+
+export function createDeveloperMessage(content: string = DEVELOPER_GUIDANCE): DeveloperInputMessage {
+  return { type: "message", role: "developer", content }
+}
+
+export function createInitialModelContext(): ModelInputItem[] {
+  return [createDeveloperMessage()]
+}
 
 export function createUserMessage(content: string): UserInputMessage {
   return { type: "message", role: "user", content }
@@ -40,4 +55,3 @@ export function appendFunctionCallOutput(
 ): ModelInputItem[] {
   return [...context, createFunctionCallOutput(callId, output)]
 }
-

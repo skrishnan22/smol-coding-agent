@@ -1,9 +1,12 @@
 import { expect, test } from "bun:test"
 import {
+  DEVELOPER_GUIDANCE,
   appendFunctionCallOutput,
   appendResponseOutput,
   appendUserMessage,
+  createDeveloperMessage,
   createFunctionCallOutput,
+  createInitialModelContext,
   createUserMessage,
 } from "../src/model-context.js"
 
@@ -13,6 +16,10 @@ test("createUserMessage builds a Responses API user item", () => {
     role: "user",
     content: "hello",
   })
+})
+
+test("createInitialModelContext starts with developer guidance", () => {
+  expect(createInitialModelContext()).toEqual([createDeveloperMessage(DEVELOPER_GUIDANCE)])
 })
 
 test("appendUserMessage adds a user item without mutating the prior context", () => {

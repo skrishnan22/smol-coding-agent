@@ -37,11 +37,18 @@ export type UserInputMessage = {
   content: string
 }
 
+/** Locally constructed developer/system guidance for the harness. */
+export type DeveloperInputMessage = {
+  type: "message"
+  role: "developer"
+  content: string
+}
+
 /**
  * Ordered model context for `store: false` turns.
  * Local messages plus provider `output[]` items resent exactly as returned.
  */
-export type ModelInputItem = UserInputMessage | Record<string, unknown>
+export type ModelInputItem = UserInputMessage | DeveloperInputMessage | Record<string, unknown>
 
 export type OpenAITool = {
   type: "function"
