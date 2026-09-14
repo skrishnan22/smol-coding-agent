@@ -217,3 +217,49 @@ test("runTurn fails visibly on multiple function_calls without appending them", 
     message: "Unsupported response: 2 function calls in one turn",
   })
 })
+
+
+test("runTurn stops after the provider-call limit", async () => {
+  const functionCall = {
+    type: "function_call",
+    call_id: "call_loop",
+    name: "read_file",
+    arguments: '{"path":"package.json"}',
+  }
+
+  let calls = 0
+  const client: OpenAIClient = {
+    respond: async () => {
+      calls += 1
+      return {
+        id: `resp_${calls}`,
+        status: "completed",
+        text: "",
+        output: [{ ...functionCall, call_id: `call_${calls}` }],
+        usage: { inputTokens: 1, outputTokens: 1, estimatedCostUsd: 0.000001 },
+      }
+    },
+  }
+
+  const events: TurnEvent[] = []
+  await runTurn({
+    prompt: "keep reading",
+    context: [],
+    client,
+    rootDir: process.cwd(),
+    maxProviderCalls: 3,
+    onEvent: (event) => events.push(event),
+    executeReadFile: async () => ({
+      ok: true,
+      path: "package.json",
+      bytes: 1,
+      output: '{"path":"package.json","bytes":1,"content":"{}"}',
+    }),
+  })
+
+  expect(calls).toBe(3)
+  expect(events.at(-1)).toEqual({
+    type: "turn_failed",
+    message: "Exceeded 3 provider calls without final text",
+  })
+})

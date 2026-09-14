@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test"
 import { testRender } from "@opentui/react/test-utils"
 import { act } from "react"
 import { App, HarnessView, type TranscriptItem } from "../src/app.js"
-import { createUserMessage } from "../src/model-context.js"
+import { createInitialModelContext, createUserMessage } from "../src/model-context.js"
 import type { ModelInputItem, OpenAIClient, OpenAIResponse } from "../src/openai/types.js"
 
 let renderer: Awaited<ReturnType<typeof testRender>>["renderer"] | undefined
@@ -95,7 +95,7 @@ test("a function_call runs read_file, continues, and shows the assistant reply",
   expect(frame).toContain("Ask the harness")
   expect(frame).not.toContain("AI harness · running")
   expect(calls).toHaveLength(2)
-  expect(calls[0]).toEqual([createUserMessage("Read package.json")])
+  expect(calls[0]).toEqual([...createInitialModelContext(), createUserMessage("Read package.json")])
   expect(calls[1]?.at(-1)).toMatchObject({
     type: "function_call_output",
     call_id: "call_read_1",
@@ -190,7 +190,7 @@ test("submitting a prompt calls OpenAI once and shows the assistant reply", asyn
   expect(frame).toContain("Explain the loop")
   expect(frame).toContain("AI harness · running")
   expect(frame).toContain("Waiting for the agent")
-  expect(calls).toEqual([[createUserMessage("Explain the loop")]])
+  expect(calls).toEqual([[...createInitialModelContext(), createUserMessage("Explain the loop")]])
 
   const firstOutput = [
     {
@@ -280,7 +280,7 @@ test("a second prompt resends the accumulated model context", async () => {
   })
   await screen.flush()
 
-  expect(calls[0]).toEqual([createUserMessage("My name is Ada")])
+  expect(calls[0]).toEqual([...createInitialModelContext(), createUserMessage("My name is Ada")])
 
   await act(async () => {
     await screen.mockInput.typeText("What is my name?")
@@ -294,6 +294,7 @@ test("a second prompt resends the accumulated model context", async () => {
 
   expect(calls).toHaveLength(2)
   expect(calls[1]).toEqual([
+    ...createInitialModelContext(),
     createUserMessage("My name is Ada"),
     ...firstOutput,
     createUserMessage("What is my name?"),
@@ -340,6 +341,47 @@ test("OpenAI failure shows a transcript error and clears busy state", async () =
   expect(frame).toContain("OpenAI request failed (401): Invalid API key")
   expect(frame).toContain("Ask the harness")
   expect(frame).not.toContain("AI harness · running")
+})
+
+
+test("completed tool cards collapse and expand with Enter", async () => {
+  const items = [
+    {
+      id: "1",
+      kind: "tool",
+      callId: "call-1",
+      name: "read_file",
+      input: '{"path":"fixtures/hello.txt"}',
+      status: "succeeded",
+      summary: "fixtures/hello.txt · 31B",
+      output: '{"path":"fixtures/hello.txt","bytes":31,"content":"hello from the harness fixture\\n"}',
+    },
+  ] satisfies readonly TranscriptItem[]
+
+  const screen = await testRender(
+    <HarnessView items={items} busy={false} usage={{ inputTokens: 1, outputTokens: 1, costUsd: 0.000001 }} onSubmit={() => {}} />,
+    { width: 80, height: 20 },
+  )
+  renderer = screen.renderer
+
+  await screen.renderOnce()
+  let frame = screen.captureCharFrame()
+  expect(frame).toContain("done     read_file · fixtures/hello.txt · 31B")
+  expect(frame).not.toContain('{"path":"fixtures/hello.txt"}')
+
+  act(() => {
+    screen.mockInput.pressTab()
+  })
+  await screen.flush()
+  act(() => {
+    screen.mockInput.pressEnter()
+  })
+  await screen.flush()
+
+  frame = screen.captureCharFrame()
+  expect(frame).toContain('{"path":"fixtures/hello.txt"}')
+  expect(frame).toContain("hello from the harness")
+  expect(frame).toContain("fixture")
 })
 
 test("renders assistant output, tool states, and real usage", async () => {
