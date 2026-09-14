@@ -2,9 +2,8 @@ import { createCliRenderer } from "@opentui/core"
 import { createRoot } from "@opentui/react"
 import { useCallback, useRef, useState } from "react"
 import { createJsonlSink } from "./logging/jsonl.js"
-import { appendResponseOutput, appendUserMessage } from "./model-context.js"
+import { runTurn, type TurnEvent } from "./agent-loop.js"
 import { createOpenAIClient } from "./openai/client.js"
-import { listFunctionCalls } from "./openai/tools.js"
 import type { ModelInputItem, OpenAIClient, OpenAIWideEvent } from "./openai/types.js"
 
 export type TranscriptItem =
@@ -144,64 +143,93 @@ export function App({ client }: AppProps) {
       nextId.current += 1
       const userItem: TranscriptItem = { id: `local-${nextId.current}`, kind: "user", text: prompt }
       setItems((current) => [...current, userItem])
-
-      const nextContext = appendUserMessage(modelContext.current, prompt)
-      modelContext.current = nextContext
       setBusy(true)
 
-      void client
-        .respond(nextContext)
+      const handleEvent = (event: TurnEvent) => {
+        switch (event.type) {
+          case "model_started":
+            return
+          case "usage_recorded":
+            setUsage((current) => ({
+              inputTokens: current.inputTokens + event.inputTokens,
+              outputTokens: current.outputTokens + event.outputTokens,
+              costUsd: current.costUsd + event.estimatedCostUsd,
+            }))
+            return
+          case "tool_started":
+            nextId.current += 1
+            setItems((current) => [
+              ...current,
+              {
+                id: `local-${nextId.current}`,
+                kind: "tool",
+                callId: event.callId,
+                name: event.name,
+                input: event.rawArguments,
+                status: "running",
+              },
+            ])
+            return
+          case "tool_finished":
+            setItems((current) =>
+              current.map((item) =>
+                item.kind === "tool" && item.callId === event.callId
+                  ? { ...item, status: "succeeded", summary: event.summary }
+                  : item,
+              ),
+            )
+            return
+          case "tool_failed":
+            setItems((current) =>
+              current.map((item) =>
+                item.kind === "tool" && item.callId === event.callId
+                  ? { ...item, status: "failed", summary: event.error }
+                  : item,
+              ),
+            )
+            return
+          case "assistant_finished":
+            nextId.current += 1
+            setItems((current) => [
+              ...current,
+              {
+                id: `local-${nextId.current}`,
+                kind: "assistant",
+                text: event.text,
+              },
+            ])
+            return
+          case "turn_failed":
+            nextId.current += 1
+            setItems((current) => [
+              ...current,
+              {
+                id: `local-${nextId.current}`,
+                kind: "error",
+                text: event.message,
+              },
+            ])
+            return
+        }
+      }
+
+      void runTurn({
+        prompt,
+        context: modelContext.current,
+        client,
+        rootDir: process.cwd(),
+        onEvent: handleEvent,
+      })
         .then((result) => {
-          setUsage((current) => ({
-            inputTokens: current.inputTokens + result.usage.inputTokens,
-            outputTokens: current.outputTokens + result.usage.outputTokens,
-            costUsd: current.costUsd + result.usage.estimatedCostUsd,
-          }))
-
-          const calls = listFunctionCalls(result.output)
-          if (calls.length > 1) {
-            nextId.current += 1
-            const errorItem: TranscriptItem = {
-              id: `local-${nextId.current}`,
-              kind: "error",
-              text: `Unsupported response: ${calls.length} function calls in one turn`,
-            }
-            setItems((current) => [...current, errorItem])
-            return
-          }
-
-          // Preserve provider output before interpreting it — these items are next-turn input.
-          modelContext.current = appendResponseOutput(modelContext.current, result.output)
-
-          if (calls.length === 1) {
-            const call = calls[0]!
-            nextId.current += 1
-            const toolItem: TranscriptItem = {
-              id: `local-${nextId.current}`,
-              kind: "tool",
-              callId: call.callId,
-              name: call.name,
-              input: call.arguments,
-              status: "running",
-            }
-            setItems((current) => [...current, toolItem])
-            // Execution / function_call_output is the next checkpoint.
-            return
-          }
-
-          nextId.current += 1
-          const assistantItem: TranscriptItem = {
-            id: `local-${nextId.current}`,
-            kind: "assistant",
-            text: result.text,
-          }
-          setItems((current) => [...current, assistantItem])
+          modelContext.current = result.context
         })
         .catch((cause: unknown) => {
           nextId.current += 1
           const message = cause instanceof Error ? cause.message : String(cause)
-          const errorItem: TranscriptItem = { id: `local-${nextId.current}`, kind: "error", text: message }
-          setItems((current) => [...current, errorItem])
+          setItems((current) => [
+            ...current,
+            { id: `local-${nextId.current}`, kind: "error", text: message },
+          ])
         })
         .finally(() => {
           setBusy(false)

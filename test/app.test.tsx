@@ -29,27 +29,48 @@ function deferredResponse() {
 }
 
 
-test("a function_call shows a running tool card without executing", async () => {
-  const output = [
-    {
-      type: "function_call",
-      call_id: "call_read_1",
-      name: "read_file",
-      arguments: '{"path":"package.json"}',
-    },
-  ]
+test("a function_call runs read_file, continues, and shows the assistant reply", async () => {
+  const functionCall = {
+    type: "function_call",
+    call_id: "call_read_1",
+    name: "read_file",
+    arguments: '{"path":"package.json"}',
+  }
 
-  const client: OpenAIClient = {
-    respond: async () => ({
+  const calls: ModelInputItem[][] = []
+  const responses = [
+    {
       id: "resp_tool",
       status: "completed",
       text: "",
-      output,
+      output: [functionCall],
       usage: { inputTokens: 12, outputTokens: 8, estimatedCostUsd: 0.000012 },
-    }),
+    },
+    {
+      id: "resp_final",
+      status: "completed",
+      text: "package.json lists the harness dependencies.",
+      output: [
+        {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "package.json lists the harness dependencies." }],
+        },
+      ],
+      usage: { inputTokens: 40, outputTokens: 10, estimatedCostUsd: 0.00002 },
+    },
+  ] satisfies OpenAIResponse[]
+
+  const client: OpenAIClient = {
+    respond: async (input) => {
+      calls.push([...input])
+      const next = responses[calls.length - 1]
+      if (next === undefined) throw new Error("unexpected extra respond call")
+      return next
+    },
   }
 
-  const screen = await testRender(<App client={client} />, { width: 80, height: 24 })
+  const screen = await testRender(<App client={client} />, { width: 80, height: 28 })
   renderer = screen.renderer
 
   await act(async () => {
@@ -59,19 +80,28 @@ test("a function_call shows a running tool card without executing", async () => 
   await act(async () => {
     screen.mockInput.pressEnter()
     await Promise.resolve()
+    await Promise.resolve()
   })
   await screen.flush()
 
   const frame = screen.captureCharFrame()
   expect(frame).toContain("YOU")
   expect(frame).toContain("Read package.json")
-  expect(frame).toContain("running  read_file")
-  expect(frame).toContain('{"path":"package.json"}')
-  expect(frame).toContain("input 12 · output 8 · $0.000012")
+  expect(frame).toContain("done     read_file")
+  expect(frame).toContain("package.json")
+  expect(frame).toContain("ASSISTANT")
+  expect(frame).toContain("package.json lists the harness dependencies.")
+  expect(frame).toContain("input 52 · output 18 · $0.000032")
   expect(frame).toContain("Ask the harness")
   expect(frame).not.toContain("AI harness · running")
-  expect(frame).not.toContain("ASSISTANT")
+  expect(calls).toHaveLength(2)
+  expect(calls[0]).toEqual([createUserMessage("Read package.json")])
+  expect(calls[1]?.at(-1)).toMatchObject({
+    type: "function_call_output",
+    call_id: "call_read_1",
+  })
 })
+
 
 test("multiple function_calls fail the turn without a tool card", async () => {
   const output = [
