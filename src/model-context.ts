@@ -17,3 +17,27 @@ export function appendResponseOutput(
 ): ModelInputItem[] {
   return [...context, ...(output as ModelInputItem[])]
 }
+
+export type FunctionCallOutputItem = {
+  type: "function_call_output"
+  call_id: string
+  output: string
+}
+
+/** Build the Responses item that correlates a tool result to a prior function_call. */
+export function createFunctionCallOutput(callId: string, output: string): FunctionCallOutputItem {
+  return {
+    type: "function_call_output",
+    call_id: callId,
+    output,
+  }
+}
+
+export function appendFunctionCallOutput(
+  context: readonly ModelInputItem[],
+  callId: string,
+  output: string,
+): ModelInputItem[] {
+  return [...context, createFunctionCallOutput(callId, output)]
+}
+

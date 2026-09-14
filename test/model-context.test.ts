@@ -1,5 +1,11 @@
 import { expect, test } from "bun:test"
-import { appendResponseOutput, appendUserMessage, createUserMessage } from "../src/model-context.js"
+import {
+  appendFunctionCallOutput,
+  appendResponseOutput,
+  appendUserMessage,
+  createFunctionCallOutput,
+  createUserMessage,
+} from "../src/model-context.js"
 
 test("createUserMessage builds a Responses API user item", () => {
   expect(createUserMessage("hello")).toEqual({
@@ -34,4 +40,26 @@ test("appendResponseOutput preserves provider output items as-is", () => {
   expect(next).toEqual([...prior, ...output])
   expect(next[1]).toBe(output[0])
   expect(next[2]).toBe(output[1])
+})
+
+test("createFunctionCallOutput correlates by call_id", () => {
+  expect(createFunctionCallOutput("call_1", '{"ok":true}')).toEqual({
+    type: "function_call_output",
+    call_id: "call_1",
+    output: '{"ok":true}',
+  })
+})
+
+test("appendFunctionCallOutput appends the correlated tool result", () => {
+  const prior = [createUserMessage("read it")]
+  const next = appendFunctionCallOutput(prior, "call_1", '{"path":"a.txt"}')
+  expect(prior).toHaveLength(1)
+  expect(next).toEqual([
+    createUserMessage("read it"),
+    {
+      type: "function_call_output",
+      call_id: "call_1",
+      output: '{"path":"a.txt"}',
+    },
+  ])
 })
