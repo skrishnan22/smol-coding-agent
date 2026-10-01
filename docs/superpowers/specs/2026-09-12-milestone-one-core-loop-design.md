@@ -58,14 +58,22 @@ The milestone excludes:
 
 `harness-eng` becomes the Git repository for the learning harness. The existing Letta, OpenCode, OpenTUI, and Pi repositories remain ignored, read-only reference checkouts.
 
+As built, the event union lives in `agent-loop.ts` and the OpenAI adapter is split into an `openai/` folder:
+
 ```text
 harness-eng/
 ├── src/
 │   ├── app.tsx
-│   ├── agent-loop.ts
-│   ├── openai.ts
-│   ├── events.ts
-│   └── read-file.ts
+│   ├── agent-loop.ts        # runTurn and the TurnEvent union
+│   ├── model-context.ts
+│   ├── read-file.ts
+│   ├── openai/
+│   │   ├── client.ts
+│   │   ├── tools.ts
+│   │   └── types.ts
+│   └── logging/
+│       ├── jsonl.ts
+│       └── types.ts
 ├── test/
 ├── docs/
 │   ├── learning/
