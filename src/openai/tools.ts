@@ -20,6 +20,33 @@ export const READ_FILE_TOOL = {
   strict: true,
 } satisfies OpenAITool
 
+/**
+ * Strict Responses API tool schema for the sandboxed shell. The schema is as small as
+ * read_file's; the description is what teaches the model the sandbox rules.
+ */
+export const BASH_TOOL = {
+  type: "function",
+  name: "bash",
+  description:
+    "Run one shell command with /bin/bash -c inside a sandbox. " +
+    "Each call is a fresh shell: cd and env vars do not persist, so chain with && when needed. " +
+    "The working directory is the project root. " +
+    "Files can be read broadly (except credential paths) but written only under the project and temp dir. " +
+    "There is no network access. Commands time out after 30s and output is truncated at 16 KiB.",
+  parameters: {
+    type: "object",
+    properties: {
+      command: {
+        type: "string",
+        description: 'The shell command to run, e.g. "ls -la src && cat package.json".',
+      },
+    },
+    required: ["command"],
+    additionalProperties: false,
+  },
+  strict: true,
+} satisfies OpenAITool
+
 const functionCallSchema = z.object({
   type: z.literal("function_call"),
   call_id: z.string().min(1),

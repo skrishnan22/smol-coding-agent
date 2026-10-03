@@ -14,6 +14,8 @@ export type ReadFileSuccess = {
   ok: true
   /** JSON string sent back to the model as function_call_output. */
   output: string
+  /** One-line label for the UI card. */
+  summary: string
   path: string
   bytes: number
 }
@@ -137,6 +139,7 @@ export async function readFile(rawArguments: string, options: ReadFileOptions): 
     ok: true,
     path: normalizedPath,
     bytes: bytes.byteLength,
+    summary: `${normalizedPath} · ${bytes.byteLength}B`,
     output: JSON.stringify(payload),
   }
 }

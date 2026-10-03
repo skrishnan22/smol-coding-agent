@@ -5,7 +5,9 @@ import {
 } from "./model-context.js"
 import { listFunctionCalls, type ParsedFunctionCall } from "./openai/tools.js"
 import type { ModelInputItem, OpenAIClient } from "./openai/types.js"
-import { readFile, type ReadFileResult } from "./read-file.js"
+import { runBash } from "./bash.js"
+import { readFile } from "./read-file.js"
+import type { ToolResult } from "./tool-result.js"
 
 export const MAX_PROVIDER_CALLS = 8
 
@@ -31,27 +33,31 @@ export type RunTurnOptions = {
   onEvent: (event: TurnEvent) => void
   maxProviderCalls?: number
   /** Injectable for tests; defaults to the local read_file tool. */
-  executeReadFile?: (rawArguments: string, rootDir: string) => Promise<ReadFileResult>
+  executeReadFile?: (rawArguments: string, rootDir: string) => Promise<ToolResult>
+  /** Injectable for tests; defaults to the sandboxed bash tool. */
+  executeBash?: (rawArguments: string, rootDir: string) => Promise<ToolResult>
 }
 
 export type RunTurnResult = {
   context: ModelInputItem[]
 }
 
-async function defaultExecuteReadFile(rawArguments: string, rootDir: string): Promise<ReadFileResult> {
-  return readFile(rawArguments, { rootDir })
-}
+type ToolExecutor = (rawArguments: string, rootDir: string) => Promise<ToolResult>
+
+const defaultExecuteReadFile: ToolExecutor = (rawArguments, rootDir) => readFile(rawArguments, { rootDir })
+const defaultExecuteBash: ToolExecutor = (rawArguments, rootDir) => runBash(rawArguments, { rootDir })
 
 async function executeTool(
   call: ParsedFunctionCall,
   rootDir: string,
-  executeReadFile: (rawArguments: string, rootDir: string) => Promise<ReadFileResult>,
-): Promise<ReadFileResult> {
-  if (call.name !== "read_file") {
+  executors: Record<string, ToolExecutor>,
+): Promise<ToolResult> {
+  const execute = executors[call.name]
+  if (execute === undefined) {
     const error = `unknown tool: ${call.name}`
     return { ok: false, error, output: JSON.stringify({ error }) }
   }
-  return executeReadFile(call.arguments, rootDir)
+  return execute(call.arguments, rootDir)
 }
 
 /**
@@ -60,7 +66,10 @@ async function executeTool(
  */
 export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
   const maxProviderCalls = options.maxProviderCalls ?? MAX_PROVIDER_CALLS
-  const executeReadFile = options.executeReadFile ?? defaultExecuteReadFile
+  const executors: Record<string, ToolExecutor> = {
+    read_file: options.executeReadFile ?? defaultExecuteReadFile,
+    bash: options.executeBash ?? defaultExecuteBash,
+  }
   let context = appendUserMessage(options.context, options.prompt)
 
   for (let providerCalls = 0; providerCalls < maxProviderCalls; providerCalls += 1) {
@@ -102,7 +111,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
         rawArguments: call.arguments,
       })
 
-      const toolResult = await executeTool(call, options.rootDir, executeReadFile)
+      const toolResult = await executeTool(call, options.rootDir, executors)
       context = appendFunctionCallOutput(context, call.callId, toolResult.output)
 
       if (toolResult.ok) {
@@ -110,7 +119,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
           type: "tool_finished",
           callId: call.callId,
           output: toolResult.output,
-          summary: `${toolResult.path} · ${toolResult.bytes}B`,
+          summary: toolResult.summary,
         })
       } else {
         options.onEvent({

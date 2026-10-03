@@ -5,6 +5,7 @@ import { runTurn, type TurnEvent } from "./agent-loop.js"
 import { createJsonlSink } from "./logging/jsonl.js"
 import { createInitialModelContext } from "./model-context.js"
 import { createOpenAIClient } from "./openai/client.js"
+import { SANDBOX_EXEC } from "./sandbox.js"
 import type { ModelInputItem, OpenAIClient, OpenAIWideEvent } from "./openai/types.js"
 
 export type TranscriptItem =
@@ -323,6 +324,11 @@ if (import.meta.main) {
   const apiKey = Bun.env.OPENAI_API_KEY ?? ""
   if (apiKey.trim().length === 0) {
     console.error("Configuration error: OPENAI_API_KEY is required")
+    process.exit(1)
+  }
+
+  if (process.platform !== "darwin" || !(await Bun.file(SANDBOX_EXEC).exists())) {
+    console.error(`Configuration error: the bash tool needs macOS Seatbelt (${SANDBOX_EXEC})`)
     process.exit(1)
   }
 
