@@ -165,7 +165,13 @@ export function HarnessView({ items, busy, usage, onSubmit }: HarnessViewProps) 
     <box style={{ flexDirection: "column", padding: 1 }}>
       <text content={busy ? "AI harness · running" : "AI harness"} style={{ fg: "#8fbcff" }} />
 
-      <scrollbox flexGrow={1} contentOptions={{ paddingRight: 1 }} verticalScrollbarOptions={{ visible: true }}>
+      <scrollbox
+        flexGrow={1}
+        stickyScroll={true}
+        stickyStart="bottom"
+        contentOptions={{ paddingRight: 1 }}
+        verticalScrollbarOptions={{ visible: true }}
+      >
         {items.length === 0 ? (
           <text content="Messages and tool calls will appear here." style={{ fg: "#8c94a3" }} />
         ) : (
