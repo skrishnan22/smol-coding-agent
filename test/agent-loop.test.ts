@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { runTurn, type TurnEvent } from "../src/agent-loop.js"
 import { createUserMessage } from "../src/model-context.js"
 import type { ModelInputItem, OpenAIClient, OpenAIResponse } from "../src/openai/types.js"
-import type { ReadFileResult } from "../src/read-file.js"
+import type { ToolResult } from "../src/tool-result.js"
 
 function scriptedClient(responses: OpenAIResponse[]): OpenAIClient {
   let index = 0
@@ -68,10 +68,9 @@ test("runTurn executes one function_call, correlates call_id, and continues to f
     onEvent: (event) => events.push(event),
     executeReadFile: async (rawArguments) => {
       toolOutputs.push(rawArguments)
-      const success: ReadFileResult = {
+      const success: ToolResult = {
         ok: true,
-        path: "package.json",
-        bytes: 12,
+        summary: "package.json · 12B",
         output: JSON.stringify({ path: "package.json", bytes: 12, content: '{"name":"x"}' }),
       }
       return success
@@ -251,8 +250,7 @@ test("runTurn stops after the provider-call limit", async () => {
     onEvent: (event) => events.push(event),
     executeReadFile: async () => ({
       ok: true,
-      path: "package.json",
-      bytes: 1,
+      summary: "package.json · 1B",
       output: '{"path":"package.json","bytes":1,"content":"{}"}',
     }),
   })

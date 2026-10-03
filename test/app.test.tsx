@@ -417,6 +417,8 @@ test("renders assistant output, tool states, and real usage", async () => {
   )
   renderer = screen.renderer
 
+  // Sticky-bottom scrolling settles on the second frame.
+  await screen.renderOnce()
   await screen.renderOnce()
   const frame = screen.captureCharFrame()
 

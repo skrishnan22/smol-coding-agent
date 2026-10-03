@@ -2,9 +2,9 @@ import type { DeveloperInputMessage, ModelInputItem, UserInputMessage } from "./
 
 export const DEVELOPER_GUIDANCE = [
   "You are the model inside a minimal learning harness.",
-  "You may call the read_file tool to read UTF-8 text files under the process startup directory.",
-  "read_file accepts exactly { \"path\": string } as a relative path.",
-  "Prefer read_file when file contents are needed. Answer directly when they are not.",
+  "You have two tools: read_file reads one UTF-8 text file under the process startup directory (exactly { \"path\": string }, relative),",
+  "and bash runs one command in a fresh sandboxed shell (exactly { \"command\": string }).",
+  "Every call is stateless. Use a tool when you need to inspect or change files; answer directly when you do not.",
 ].join(" ")
 
 export function createDeveloperMessage(content: string = DEVELOPER_GUIDANCE): DeveloperInputMessage {

@@ -7,7 +7,7 @@ import {
   type OpenAIResponse,
   type OpenAIWideEvent,
 } from "./types.js"
-import { READ_FILE_TOOL } from "./tools.js"
+import { BASH_TOOL, READ_FILE_TOOL } from "./tools.js"
 
 const RESPONSES_URL = "https://api.openai.com/v1/responses"
 
@@ -50,7 +50,7 @@ export function createOpenAIClient(options: OpenAIClientOptions): OpenAIClient {
       const requestBody = {
         model: OPENAI_MODEL,
         input,
-        tools: [READ_FILE_TOOL],
+        tools: [READ_FILE_TOOL, BASH_TOOL],
         reasoning: { effort: "none" },
         store: false,
         parallel_tool_calls: false,
