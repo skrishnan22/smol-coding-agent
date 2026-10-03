@@ -17,10 +17,7 @@ function failure(error: string): ToolResult {
  * A command that ran is always `ok: true`, whatever its exit code: `tool_failed`
  * means the harness could not run it. Sandbox denials show up as stderr + exit code.
  */
-export async function runBash(
-  rawArguments: string,
-  options: Pick<SandboxOptions, "rootDir"> & Partial<SandboxOptions>,
-): Promise<ToolResult> {
+export async function runBash(rawArguments: string, options: SandboxOptions): Promise<ToolResult> {
   let parsedArgs: unknown
   try {
     parsedArgs = JSON.parse(rawArguments)

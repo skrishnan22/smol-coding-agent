@@ -64,27 +64,35 @@ async function executeTool(
  * One user turn: call the model, optionally run one tool, continue until final text.
  * Emits ordered events for the UI; returns the updated model context.
  */
-export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
-  const maxProviderCalls = options.maxProviderCalls ?? MAX_PROVIDER_CALLS
+export async function runTurn({
+  prompt,
+  context: initialContext,
+  client,
+  rootDir,
+  onEvent,
+  maxProviderCalls = MAX_PROVIDER_CALLS,
+  executeReadFile = defaultExecuteReadFile,
+  executeBash = defaultExecuteBash,
+}: RunTurnOptions): Promise<RunTurnResult> {
   const executors: Record<string, ToolExecutor> = {
-    read_file: options.executeReadFile ?? defaultExecuteReadFile,
-    bash: options.executeBash ?? defaultExecuteBash,
+    read_file: executeReadFile,
+    bash: executeBash,
   }
-  let context = appendUserMessage(options.context, options.prompt)
+  let context = appendUserMessage(initialContext, prompt)
 
   for (let providerCalls = 0; providerCalls < maxProviderCalls; providerCalls += 1) {
-    options.onEvent({ type: "model_started" })
+    onEvent({ type: "model_started" })
 
     let result
     try {
-      result = await options.client.respond(context)
+      result = await client.respond(context)
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause)
-      options.onEvent({ type: "turn_failed", message })
+      onEvent({ type: "turn_failed", message })
       return { context }
     }
 
-    options.onEvent({
+    onEvent({
       type: "usage_recorded",
       inputTokens: result.usage.inputTokens,
       outputTokens: result.usage.outputTokens,
@@ -93,7 +101,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
 
     const calls = listFunctionCalls(result.output)
     if (calls.length > 1) {
-      options.onEvent({
+      onEvent({
         type: "turn_failed",
         message: `Unsupported response: ${calls.length} function calls in one turn`,
       })
@@ -104,25 +112,25 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
 
     if (calls.length === 1) {
       const call = calls[0]!
-      options.onEvent({
+      onEvent({
         type: "tool_started",
         callId: call.callId,
         name: call.name,
         rawArguments: call.arguments,
       })
 
-      const toolResult = await executeTool(call, options.rootDir, executors)
+      const toolResult = await executeTool(call, rootDir, executors)
       context = appendFunctionCallOutput(context, call.callId, toolResult.output)
 
       if (toolResult.ok) {
-        options.onEvent({
+        onEvent({
           type: "tool_finished",
           callId: call.callId,
           output: toolResult.output,
           summary: toolResult.summary,
         })
       } else {
-        options.onEvent({
+        onEvent({
           type: "tool_failed",
           callId: call.callId,
           error: toolResult.error,
@@ -132,11 +140,11 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
       continue
     }
 
-    options.onEvent({ type: "assistant_finished", text: result.text })
+    onEvent({ type: "assistant_finished", text: result.text })
     return { context }
   }
 
-  options.onEvent({
+  onEvent({
     type: "turn_failed",
     message: `Exceeded ${maxProviderCalls} provider calls without final text`,
   })
