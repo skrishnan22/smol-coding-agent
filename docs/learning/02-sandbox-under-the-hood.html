@@ -1,0 +1,655 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sandbox Under the Hood</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=JetBrains+Mono:wght@400;600&family=Public+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: one reading column; each idea gets prose, then one figure, then (sometimes) a small toy to poke at. */
+:root {
+  --bg: #F2F5F6;
+  --surface: #FFFFFF;
+  --fg: #13222C;
+  --muted: #4F616C;
+  --line: #CBD6DC;
+  --code: #E6ECEF;
+  --kernel: #0A6C88;
+  --kernel-soft: #D9EDF3;
+  --proc-soft: #E8ECEE;
+  --allow: #1B7A47;
+  --allow-soft: #DDF1E5;
+  --deny: #B02A21;
+  --deny-soft: #F8E1DE;
+  --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", sans-serif;
+  --body: "Public Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0D151B; --surface: #14212A; --fg: #E3EAEE; --muted: #9DB0BB; --line: #263642;
+    --code: #1A2A34; --kernel: #58BEDB; --kernel-soft: #11323D; --proc-soft: #1B2933;
+    --allow: #5EC58B; --allow-soft: #12301F; --deny: #FF8F86; --deny-soft: #3A1916;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0D151B; --surface: #14212A; --fg: #E3EAEE; --muted: #9DB0BB; --line: #263642;
+  --code: #1A2A34; --kernel: #58BEDB; --kernel-soft: #11323D; --proc-soft: #1B2933;
+  --allow: #5EC58B; --allow-soft: #12301F; --deny: #FF8F86; --deny-soft: #3A1916;
+  color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font: 16px/1.65 var(--body); }
+.page { max-width: 760px; margin-inline: auto; padding-inline: 16px; padding-block: 40px 72px; }
+h1, h2 { font-family: var(--display); text-wrap: balance; line-height: 1.12; letter-spacing: -0.01em; }
+h1 { font-size: clamp(2rem, 6vw, 2.9rem); margin: 0 0 14px; }
+h2 { font-size: 1.55rem; margin: 56px 0 10px; }
+p { margin: 0 0 14px; max-width: 66ch; }
+.lede { font-size: 1.1rem; color: var(--muted); max-width: 60ch; }
+code, .mono { font-family: var(--mono); font-size: 0.88em; background: var(--code); padding: 1px 5px; border-radius: 4px; }
+a { color: var(--kernel); }
+a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--kernel); outline-offset: 2px; }
+.eyebrow { font: 600 11px/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--kernel); margin: 0 0 10px; }
+
+.flow { margin: 20px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; counter-reset: s; }
+.flow li { counter-increment: s; display: grid; grid-template-columns: 28px 1fr; gap: 10px; align-items: baseline; padding: 10px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+.flow li::before { content: counter(s); font: 600 12px var(--mono); color: var(--kernel); text-align: center; }
+.flow span { color: var(--muted); font-size: 0.92rem; }
+
+figure { margin: 22px 0; padding: 0; }
+.fig-scroll { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+.fig-scroll svg { display: block; width: 100%; min-width: 620px; height: auto; color: var(--fg); }
+figcaption { font-size: 0.9rem; color: var(--muted); margin-top: 8px; max-width: 66ch; }
+
+.sv-band { fill: none; stroke: var(--line); stroke-dasharray: 4 5; }
+.sv-box { fill: var(--proc-soft); stroke: var(--muted); stroke-width: 1.2; }
+.sv-kbox { fill: var(--kernel-soft); stroke: var(--kernel); stroke-width: 1.4; }
+.sv-t { fill: var(--fg); font: 600 13px var(--body); }
+.sv-s { fill: var(--muted); font: 11px var(--mono); }
+.sv-p { fill: var(--fg); font: 12.5px var(--body); }
+.sv-cap { fill: var(--muted); font: 600 10.5px var(--mono); letter-spacing: 0.12em; }
+.sv-halo { paint-order: stroke; stroke: var(--surface); stroke-width: 4px; stroke-linejoin: round; }
+.sv-line { stroke: var(--fg); stroke-width: 1.5; fill: none; }
+.sv-ok { stroke: var(--allow); stroke-width: 1.8; fill: none; }
+.sv-no { stroke: var(--deny); stroke-width: 1.8; fill: none; }
+.mk { fill: var(--fg); } .mk-ok { fill: var(--allow); } .mk-no { fill: var(--deny); }
+.t-ok { fill: var(--allow); font: 600 12px var(--mono); } .t-no { fill: var(--deny); font: 600 12px var(--mono); }
+.sv-bar { fill: var(--proc-soft); stroke: var(--muted); stroke-width: 1.2; }
+.sv-kbar { fill: var(--kernel-soft); stroke: var(--kernel); stroke-width: 1.2; }
+.sv-guide { stroke: var(--kernel); stroke-width: 1.4; stroke-dasharray: 5 4; }
+
+h3 { font: 600 1.05rem/1.3 var(--display); margin: 26px 0 6px; text-wrap: balance; }
+h3 code { font-size: 0.9em; }
+pre.code { background: var(--code); border-radius: 8px; padding: 12px 14px; margin: 12px 0 14px; overflow-x: auto; font: 12.5px/1.65 var(--mono); }
+pre.code .c { color: var(--muted); }
+table.plain td:first-child { font-family: var(--body); font-size: 0.93rem; white-space: normal; font-weight: 600; }
+tr.hl td { background: var(--kernel-soft); }
+
+.callout { background: var(--kernel-soft); border-radius: 10px; padding: 14px 16px; margin: 18px 0; max-width: 66ch; }
+.callout p { margin: 0; }
+.callout strong { font-family: var(--display); }
+
+.cmp { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin: 18px 0; }
+.cmp > div { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; min-width: 0; }
+.cmp h3 { margin: 0 0 8px; font: 600 12px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.cmp ul { list-style: none; margin: 0; padding: 0; font: 13px/1.9 var(--mono); }
+.cmp .leak { color: var(--deny); font-weight: 600; }
+.cmp .gone { color: var(--muted); text-decoration: line-through; }
+
+.toy { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin: 22px 0; }
+.toy h3 { margin: 0 0 4px; font: 600 1.05rem var(--display); }
+.toy > p { color: var(--muted); font-size: 0.92rem; margin-bottom: 12px; }
+.row { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; margin-bottom: 12px; }
+.row label { font-size: 0.92rem; display: inline-flex; gap: 8px; align-items: center; min-width: 0; }
+input[type="range"] { width: min(260px, 60vw); accent-color: var(--kernel); }
+input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--kernel); }
+select { font: 14px var(--body); background: var(--surface); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; max-width: 100%; }
+.meter { height: 22px; background: var(--code); border-radius: 6px; position: relative; overflow: hidden; margin: 6px 0 4px; }
+.meter > i { position: absolute; inset: 0 auto 0 0; background: var(--kernel); width: 0; transition: width .2s; }
+.meter.full > i { background: var(--deny); }
+.meter-label { font: 12px var(--mono); color: var(--muted); display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.status { margin-top: 12px; padding: 10px 12px; border-radius: 8px; font-size: 0.95rem; }
+.status.ok { background: var(--allow-soft); } .status.bad { background: var(--deny-soft); }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-top: 10px; font: 13px var(--mono); }
+.stats div { background: var(--code); border-radius: 6px; padding: 6px 10px; min-width: 0; }
+.stats b { display: block; font: 600 11px var(--mono); letter-spacing: .08em; color: var(--muted); text-transform: uppercase; }
+
+.rules { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 6px; }
+.rules li { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 8px; align-items: start; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; font: 12.5px/1.5 var(--mono); background: var(--bg); }
+.rules li .n { color: var(--muted); }
+.rules li code { background: none; padding: 0; overflow-wrap: anywhere; font-size: 1em; }
+.rules li .tag { font: 600 11px var(--mono); color: var(--muted); }
+.rules li.hit { background: var(--surface); }
+.rules li.hit .tag::after { content: "matches"; }
+.rules li.win.allow { background: var(--allow-soft); border-color: var(--allow); }
+.rules li.win.deny { background: var(--deny-soft); border-color: var(--deny); }
+.rules li.win .tag::after { content: "last match wins"; color: var(--fg); }
+.rules li:not(.hit) { opacity: 0.55; }
+.kv { font: 13px var(--mono); margin: 10px 0 0; color: var(--muted); overflow-wrap: anywhere; }
+.kv b { color: var(--fg); font-weight: 600; }
+
+.tablewrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+table { border-collapse: collapse; width: 100%; min-width: 560px; font-size: 0.93rem; }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font: 600 11px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+tr:last-child td { border-bottom: 0; }
+td:first-child { font-family: var(--mono); font-size: 0.84rem; white-space: nowrap; }
+
+details { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 4px 14px; margin-top: 14px; }
+summary { cursor: pointer; padding: 10px 0; font-weight: 600; }
+dl { margin: 0 0 10px; display: grid; grid-template-columns: minmax(110px, 160px) 1fr; gap: 8px 14px; }
+dt { font: 600 13px var(--mono); }
+dd { margin: 0; color: var(--muted); }
+@media (max-width: 520px) { dl { grid-template-columns: 1fr; gap: 0; } dd { margin-bottom: 10px; } }
+@media (prefers-reduced-motion: reduce) { .meter > i { transition: none; } }
+body { margin: 0; }
+</style>
+
+</head>
+<body>
+<main class="page">
+  <p class="eyebrow">harness-eng · milestone two</p>
+  <h1>Sandbox Under the Hood</h1>
+  <p class="lede">When the model runs a shell command, the harness starts it inside a box the operating system enforces. This page explains the operating-system ideas behind <code>src/sandbox.ts</code>, starting from zero: what the kernel is, how programs start each other, what a pipe is, and how Seatbelt says no.</p>
+
+  <h2 style="margin-top:40px">What a sandbox is</h2>
+  <p>A sandbox is a place where code can run, with rules about what it may touch: which files, whether it can use the network, which programs it can start. Anything outside the rules fails. The name comes from a child's sandbox, where you play freely inside the walls.</p>
+  <p>There are a few ways to build the walls.</p>
+  <div class="tablewrap">
+    <table class="plain">
+      <thead><tr><th>Approach</th><th>Where the code runs</th><th>What stops it</th></tr></thead>
+      <tbody>
+        <tr><td>Virtual machine</td><td>A whole separate fake computer</td><td>It cannot see your machine at all.</td></tr>
+        <tr><td>Container (Docker)</td><td>Your machine, in a fenced-off view</td><td>It only sees its own files and processes.</td></tr>
+        <tr class="hl"><td>OS policy (Seatbelt)</td><td>Your real machine and real files</td><td>The kernel refuses any request that breaks the rules.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p style="margin-top:14px">Seatbelt is the third kind. A <strong>sandboxed process</strong> is a running program that has a Seatbelt <em>profile</em> (the list of rules) attached to it. Every file, network or program request it makes is checked against the profile, and so is every request from anything it starts. The harness itself has no profile, so it is not sandboxed. Only the commands it launches are.</p>
+
+  <h2>Programs, processes and the shell</h2>
+  <p>A <strong>program</strong> is a file on disk, such as <code>/bin/cat</code>. It does nothing by itself. A <strong>process</strong> is a program that is running right now. The same program can be running several times at once, and each run is its own process.</p>
+  <p><code>bash</code> is a <strong>shell</strong>: a program whose job is to read a line of text and start the right programs for it. While it runs, it is a process like any other. <code>cat</code> and <code>sed</code> are separate programs, and each one becomes its own process when the shell starts it.</p>
+
+  <figure>
+    <div class="fig-scroll">
+      <svg viewBox="0 0 760 272" role="img" aria-label="Top: one program file can run as several separate processes. Bottom: a bash process starts cat and sed as child processes and connects them with a pipe. They inherit the sandbox from bash.">
+        <defs>
+          <marker id="ar6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" class="mk"/></marker>
+        </defs>
+        <rect x="30" y="22" width="230" height="56" rx="6" class="sv-box"/>
+        <text x="145" y="46" text-anchor="middle" class="sv-t">/bin/cat</text>
+        <text x="145" y="64" text-anchor="middle" class="sv-s">a program: a file on disk</text>
+        <line x1="260" y1="38" x2="366" y2="30" class="sv-line" marker-end="url(#ar6)"/>
+        <line x1="260" y1="62" x2="366" y2="70" class="sv-line" marker-end="url(#ar6)"/>
+        <text x="313" y="54" text-anchor="middle" class="sv-s sv-halo">run it</text>
+        <rect x="370" y="12" width="180" height="34" rx="6" class="sv-kbox"/>
+        <text x="460" y="34" text-anchor="middle" class="sv-s" style="font-size:12px">cat · process 4121</text>
+        <rect x="370" y="54" width="180" height="34" rx="6" class="sv-kbox"/>
+        <text x="460" y="76" text-anchor="middle" class="sv-s" style="font-size:12px">cat · process 4188</text>
+        <text x="572" y="46" class="sv-s">same program,</text>
+        <text x="572" y="62" class="sv-s">separate processes</text>
+        <line x1="16" y1="108" x2="744" y2="108" class="sv-band"/>
+        <text x="16" y="128" class="sv-cap">ONE COMMAND</text>
+        <text x="16" y="146" class="sv-s">bash -c "cat notes.txt | sed 's/a/b/'"</text>
+        <rect x="30" y="170" width="230" height="60" rx="6" class="sv-kbox"/>
+        <text x="145" y="195" text-anchor="middle" class="sv-t">bash</text>
+        <text x="145" y="213" text-anchor="middle" class="sv-s">the shell: one process</text>
+        <line x1="260" y1="190" x2="398" y2="168" class="sv-line" marker-end="url(#ar6)"/>
+        <line x1="260" y1="214" x2="398" y2="234" class="sv-line" marker-end="url(#ar6)"/>
+        <text x="330" y="204" text-anchor="middle" class="sv-s sv-halo">starts</text>
+        <rect x="400" y="146" width="150" height="44" rx="6" class="sv-kbox"/>
+        <text x="475" y="165" text-anchor="middle" class="sv-t">cat notes.txt</text>
+        <text x="475" y="181" text-anchor="middle" class="sv-s">child process</text>
+        <rect x="400" y="212" width="150" height="44" rx="6" class="sv-kbox"/>
+        <text x="475" y="231" text-anchor="middle" class="sv-t">sed 's/a/b/'</text>
+        <text x="475" y="247" text-anchor="middle" class="sv-s">child process</text>
+        <line x1="475" y1="190" x2="475" y2="210" class="sv-line" marker-end="url(#ar6)"/>
+        <text x="487" y="204" class="sv-s">pipe</text>
+        <text x="572" y="196" class="sv-s">both inherit the</text>
+        <text x="572" y="212" class="sv-s">sandbox from bash</text>
+        <text x="30" y="258" class="sv-s">built-ins like cd and export run inside bash itself</text>
+      </svg>
+    </div>
+    <figcaption>The profile is attached once, to <code>bash</code>. Every process it starts inherits it, so <code>cat</code> and <code>sed</code> are sandboxed without anyone touching them.</figcaption>
+  </figure>
+  <p><code>bash</code> is not special to the sandbox. The harness runs <code>bash -c "…"</code> because the model writes shell syntax (pipes, <code>&amp;&amp;</code>, redirects), and bash is the program that understands it. The same wrapper could launch <code>python script.py</code>.</p>
+
+  <h2>What happens in one <code>bash</code> call</h2>
+  <ol class="flow">
+    <li><div><a href="#paths">Resolve the paths</a><br><span>Turn the project, temp and home folders into their real locations.</span></div></li>
+    <li><div><a href="#kernel">Build the Seatbelt profile</a><br><span>A list of allow and deny rules the kernel will enforce.</span></div></li>
+    <li><div><a href="#spawn">Spawn the shell</a><br><span><code>sandbox-exec</code> applies the profile, then becomes <code>bash</code>.</span></div></li>
+    <li><div><a href="#pipes">Collect its output</a><br><span>stdout and stderr flow through pipes. stdin is switched off.</span></div></li>
+    <li><div><a href="#signals">Enforce the time limit</a><br><span>After 30 seconds the process is killed.</span></div></li>
+  </ol>
+
+  <h2 id="kernel">Programs ask, the kernel decides</h2>
+  <p>A program such as <code>cat</code> cannot read a disk by itself. Only the <strong>kernel</strong>, the core of the operating system, may touch the disk, the network and other hardware. A normal program lives in <strong>user space</strong> and asks the kernel to act for it. Each request is a <strong>system call</strong> (syscall), for example <code>open</code>, <code>write</code> or <code>connect</code>.</p>
+  <p>Seatbelt is a checkpoint inside the kernel. Before the kernel carries out a request from a sandboxed process, it checks that process's profile. If a rule says deny, the kernel returns an error called <code>EPERM</code>, which programs print as <em>Operation not permitted</em>. The program keeps running. Only that one request failed.</p>
+
+  <figure>
+    <div class="fig-scroll">
+      <svg viewBox="0 0 760 240" role="img" aria-label="A process sends a syscall across the user space and kernel boundary. Seatbelt checks it. If no deny rule applies the kernel does the work, otherwise it returns an EPERM error.">
+        <defs>
+          <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" class="mk"/></marker>
+          <marker id="ar-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" class="mk-ok"/></marker>
+          <marker id="ar-no" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" class="mk-no"/></marker>
+        </defs>
+        <line x1="226" y1="12" x2="226" y2="228" class="sv-band"/>
+        <text x="113" y="28" text-anchor="middle" class="sv-cap">USER SPACE</text>
+        <text x="493" y="28" text-anchor="middle" class="sv-cap">KERNEL</text>
+        <rect x="16" y="92" width="120" height="56" rx="6" class="sv-box"/>
+        <text x="76" y="116" text-anchor="middle" class="sv-t">cat</text>
+        <text x="76" y="134" text-anchor="middle" class="sv-s">a normal program</text>
+        <line x1="136" y1="120" x2="286" y2="120" class="sv-line" marker-end="url(#ar)"/>
+        <text x="211" y="108" text-anchor="middle" class="sv-s sv-halo">open(~/.ssh/key)</text>
+        <rect x="290" y="84" width="150" height="72" rx="6" class="sv-kbox"/>
+        <text x="365" y="112" text-anchor="middle" class="sv-t">Seatbelt</text>
+        <text x="365" y="132" text-anchor="middle" class="sv-s">checks the profile</text>
+        <line x1="440" y1="104" x2="568" y2="68" class="sv-ok" marker-end="url(#ar-ok)"/>
+        <text x="495" y="74" text-anchor="middle" class="t-ok sv-halo">no deny rule</text>
+        <line x1="440" y1="136" x2="568" y2="176" class="sv-no" marker-end="url(#ar-no)"/>
+        <text x="495" y="172" text-anchor="middle" class="t-no sv-halo">deny rule wins</text>
+        <rect x="570" y="38" width="172" height="56" rx="6" class="sv-box"/>
+        <text x="656" y="62" text-anchor="middle" class="sv-t">disk or network</text>
+        <text x="656" y="80" text-anchor="middle" class="sv-s">does the work</text>
+        <rect x="570" y="150" width="172" height="56" rx="6" class="sv-box"/>
+        <text x="656" y="174" text-anchor="middle" class="sv-t">EPERM error</text>
+        <text x="656" y="192" text-anchor="middle" class="sv-s">only this call fails</text>
+      </svg>
+    </div>
+    <figcaption>Every file, network or program request crosses into the kernel as a syscall. Seatbelt is the checkpoint on that path.</figcaption>
+  </figure>
+
+  <div class="callout"><p><strong>Why this beats reading the command text.</strong> <code>cat</code>, a Python script and a clever one-liner all end up making the same syscalls. The kernel sees the request itself, so it does not matter which program or trick produced it. That is the difference from the old <code>read_file</code> check, which looked at a string before acting.</p></div>
+
+  <h2 id="spawn">Spawning, <code>exec</code> and inheritance</h2>
+  <p>A <strong>process</strong> is a running program. Every process is started by another one, its <em>parent</em>. In <code>runSandboxed</code>, the harness (a Bun process) calls <code>Bun.spawn</code>, which starts <code>sandbox-exec</code>. That tool is Apple's launcher for Seatbelt. It attaches your profile to itself, then calls <code>exec</code>, which swaps a different program into the same process. The process that was <code>sandbox-exec</code> is now <code>bash</code>, and it is already sandboxed.</p>
+  <p>Children inherit three things from a parent: the sandbox, the environment variables and the open files. The sandbox part cannot be removed. A process may tighten its sandbox but never loosen it, so a command the model writes cannot switch it off.</p>
+
+  <figure>
+    <div class="fig-scroll">
+      <svg viewBox="0 0 760 310" role="img" aria-label="The harness spawns sandbox-exec, which executes bash. Bash spawns cat and curl, which inherit the sandbox.">
+        <defs>
+          <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" class="mk"/></marker>
+        </defs>
+        <rect x="30" y="16" width="230" height="54" rx="6" class="sv-box"/>
+        <text x="145" y="40" text-anchor="middle" class="sv-t">harness (Bun)</text>
+        <text x="145" y="58" text-anchor="middle" class="sv-s">your code, holds the API key</text>
+        <line x1="145" y1="70" x2="145" y2="116" class="sv-line" marker-end="url(#ar2)"/>
+        <text x="157" y="98" class="sv-s">Bun.spawn</text>
+        <rect x="30" y="118" width="230" height="54" rx="6" class="sv-kbox"/>
+        <text x="145" y="142" text-anchor="middle" class="sv-t">sandbox-exec</text>
+        <text x="145" y="160" text-anchor="middle" class="sv-s">attaches the profile to itself</text>
+        <line x1="145" y1="172" x2="145" y2="218" class="sv-line" marker-end="url(#ar2)"/>
+        <text x="157" y="200" class="sv-s">exec: becomes bash</text>
+        <rect x="30" y="220" width="230" height="54" rx="6" class="sv-kbox"/>
+        <text x="145" y="244" text-anchor="middle" class="sv-t">/bin/bash -c "..."</text>
+        <text x="145" y="262" text-anchor="middle" class="sv-s">same process, now sandboxed</text>
+        <line x1="260" y1="242" x2="466" y2="214" class="sv-line" marker-end="url(#ar2)"/>
+        <line x1="260" y1="254" x2="466" y2="274" class="sv-line" marker-end="url(#ar2)"/>
+        <text x="364" y="250" text-anchor="middle" class="sv-s sv-halo">spawns</text>
+        <rect x="470" y="192" width="250" height="44" rx="6" class="sv-kbox"/>
+        <text x="595" y="211" text-anchor="middle" class="sv-t">cat</text>
+        <text x="595" y="227" text-anchor="middle" class="sv-s">inherits the sandbox</text>
+        <rect x="470" y="252" width="250" height="44" rx="6" class="sv-kbox"/>
+        <text x="595" y="271" text-anchor="middle" class="sv-t">curl</text>
+        <text x="595" y="287" text-anchor="middle" class="sv-s">inherits the sandbox</text>
+        <text x="470" y="28" class="sv-t">A child inherits from its parent</text>
+        <text x="470" y="52" class="sv-p">1. the sandbox (it cannot be removed)</text>
+        <text x="470" y="74" class="sv-p">2. environment variables</text>
+        <text x="470" y="96" class="sv-p">3. open files: stdin, stdout, stderr</text>
+        <text x="470" y="128" class="sv-s">The harness chooses what 2 and 3 are.</text>
+      </svg>
+    </div>
+    <figcaption>One <code>exec</code> turns the launcher into the shell. Everything the shell starts afterwards carries the same restrictions.</figcaption>
+  </figure>
+
+  <p><strong>Environment variables</strong> are named strings that every process carries, such as <code>PATH</code> or <code>HOME</code>. By default a child receives a copy of all of its parent's. Seatbelt does not restrict that channel, so the harness closes it by hand.</p>
+  <div class="cmp">
+    <div>
+      <h3>Default: child inherits all</h3>
+      <ul>
+        <li>PATH=/usr/bin:…</li>
+        <li>HOME=/Users/you</li>
+        <li>TERM=xterm-256color</li>
+        <li class="leak">OPENAI_API_KEY=sk-…</li>
+        <li>…everything else</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Ours: allowlist</h3>
+      <ul>
+        <li>PATH</li><li>HOME</li><li>LANG</li><li>TERM</li><li>TMPDIR</li>
+        <li class="gone">OPENAI_API_KEY</li>
+      </ul>
+    </div>
+  </div>
+  <p>Without the allowlist, <code>echo $OPENAI_API_KEY</code> would print your key into the model's context and into the log file, even though the network is blocked.</p>
+
+  <h2 id="pipes">Files, pipes and <code>stdin</code></h2>
+  <p>To a program, every open file, pipe or device is just a number called a <strong>file descriptor</strong>. Three exist from the start: <code>0</code> is stdin (input), <code>1</code> is stdout (normal output) and <code>2</code> is stderr (errors). The parent decides where each one points.</p>
+  <p>In <code>sandbox.ts</code>, stdin points at <code>/dev/null</code>, a device that is always at end-of-file. A read returns "no more input" immediately, so a bare <code>cat</code> exits at once instead of waiting for you to type. Stdout and stderr point at <strong>pipes</strong>. A pipe is a small buffer inside the kernel that one process writes into and another reads from.</p>
+
+  <figure>
+    <div class="fig-scroll">
+      <svg viewBox="0 0 760 262" role="img" aria-label="Bash has three file descriptors. Stdin reads from dev null. Stdout and stderr write into pipes that the harness capture function reads.">
+        <defs>
+          <marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" class="mk"/></marker>
+        </defs>
+        <rect x="16" y="40" width="150" height="170" rx="6" class="sv-kbox"/>
+        <text x="91" y="64" text-anchor="middle" class="sv-t">bash</text>
+        <text x="30" y="102" class="sv-s">0  stdin</text>
+        <text x="30" y="142" class="sv-s">1  stdout</text>
+        <text x="30" y="182" class="sv-s">2  stderr</text>
+        <circle cx="166" cy="98" r="4" class="mk"/><circle cx="166" cy="138" r="4" class="mk"/><circle cx="166" cy="178" r="4" class="mk"/>
+        <rect x="300" y="82" width="150" height="32" rx="6" class="sv-box"/>
+        <text x="375" y="102" text-anchor="middle" class="sv-s" style="font-size:12px">/dev/null</text>
+        <line x1="300" y1="98" x2="172" y2="98" class="sv-line" marker-end="url(#ar3)"/>
+        <text x="236" y="88" text-anchor="middle" class="sv-s sv-halo">always EOF</text>
+        <rect x="300" y="122" width="190" height="32" rx="16" class="sv-kbox"/>
+        <text x="395" y="142" text-anchor="middle" class="sv-s" style="font-size:12px">pipe (small buffer)</text>
+        <rect x="300" y="162" width="190" height="32" rx="16" class="sv-kbox"/>
+        <text x="395" y="182" text-anchor="middle" class="sv-s" style="font-size:12px">pipe (small buffer)</text>
+        <line x1="172" y1="138" x2="298" y2="138" class="sv-line" marker-end="url(#ar3)"/>
+        <line x1="172" y1="178" x2="298" y2="178" class="sv-line" marker-end="url(#ar3)"/>
+        <rect x="570" y="120" width="170" height="36" rx="6" class="sv-box"/>
+        <text x="655" y="143" text-anchor="middle" class="sv-s" style="font-size:12px">capture(stdout)</text>
+        <rect x="570" y="160" width="170" height="36" rx="6" class="sv-box"/>
+        <text x="655" y="183" text-anchor="middle" class="sv-s" style="font-size:12px">capture(stderr)</text>
+        <line x1="490" y1="138" x2="568" y2="138" class="sv-line" marker-end="url(#ar3)"/>
+        <line x1="490" y1="178" x2="568" y2="178" class="sv-line" marker-end="url(#ar3)"/>
+        <text x="740" y="220" text-anchor="end" class="sv-s">keeps the first 16 KiB, drops the rest</text>
+        <text x="16" y="234" class="sv-cap">BASH (CHILD)</text>
+        <text x="740" y="248" text-anchor="end" class="sv-cap">HARNESS (PARENT)</text>
+      </svg>
+    </div>
+    <figcaption>The parent decides what each of the child's three descriptors points at. Data flows toward the harness through the pipes.</figcaption>
+  </figure>
+
+  <p>The harness needs the command's output so it can hand it to the model. The command and the harness are separate processes with separate memory, so the text has to travel through the kernel. A pipe is the tube it travels through: the command writes text in at one end and the harness reads it out at the other. In the middle sits a small bucket, the <strong>buffer</strong>. It holds only tens of kilobytes.</p>
+
+  <h3>Why is there a <code>capture</code> function at all?</h3>
+  <p>Reading does not happen by itself. The harness is given a stream, and something has to keep pulling data out of it. <code>capture</code> is that something. It is a loop: wait for the next chunk, store it, repeat until the pipe reports end-of-file (every writer has closed it). One loop watches stdout and another watches stderr, and both run while the command runs.</p>
+  <pre class="code"><span class="c">// the heart of capture(), simplified</span>
+for (;;) {
+  const { done, value } = await reader.read()   <span class="c">// wait for the next chunk from the pipe</span>
+  if (done) return                              <span class="c">// end-of-file: nobody can write any more</span>
+  const room = max - size                       <span class="c">// how much of the 16 KiB is left</span>
+  if (room &gt; 0) keep(value.subarray(0, room))   <span class="c">// store the part that fits</span>
+  if (value.length &gt; room) truncated = true     <span class="c">// anything past that is dropped</span>
+}</pre>
+
+  <h3>Why not just read everything after the command finishes?</h3>
+  <p>Because of the small bucket. When it is full, the command's next write <strong>blocks</strong>: the command goes to sleep until someone makes room. If the harness waited for the command to exit before reading, the command would be asleep waiting for room and the harness would be waiting for the command. Neither moves. Reading has to happen at the same time as running.</p>
+
+  <h3>Why truncate at 16 KiB?</h3>
+  <p>Output can be unlimited. <code>cat</code> on a huge log, or <code>yes</code>, which prints forever. Whatever the harness keeps ends up in three places: the harness's memory, the model's context (every byte costs tokens and can overflow the context window) and the log file. A cap of 16 KiB per stream puts a ceiling on all three. The <code>truncated: true</code> flag tells the model that something was cut, so it can run a narrower command.</p>
+
+  <h3>Why keep reading after the cap?</h3>
+  <p>This is the subtle part. It would seem simpler to stop reading once 16 KiB is stored. But then nobody empties the bucket, it fills, and the command blocks and hangs until the 30 second kill. So <code>capture</code> keeps emptying the pipe and throws the extra away. The command never finds out. It runs to the end, and the model gets the first 16 KiB plus the flag.</p>
+
+  <figure>
+    <div class="fig-scroll">
+      <svg viewBox="0 0 760 150" role="img" aria-label="A command prints 100 kilobytes. The first 16 KiB is kept and sent to the model. The remaining 84 kilobytes is read from the pipe and discarded. The result has truncated set to true.">
+        <rect x="16" y="50" width="116" height="36" rx="4" class="sv-kbar"/>
+        <rect x="132" y="50" width="612" height="36" rx="4" class="sv-bar"/>
+        <text x="16" y="40" class="t-ok" style="font-size:11.5px">kept: first 16 KiB</text>
+        <text x="140" y="40" class="sv-s" style="font-size:11.5px">read from the pipe, then thrown away: the other 84 KB</text>
+        <text x="16" y="106" class="sv-s">0</text>
+        <text x="132" y="106" text-anchor="middle" class="sv-s">16 KB</text>
+        <text x="744" y="106" text-anchor="end" class="sv-s">100 KB printed by the command</text>
+        <text x="16" y="136" class="sv-s">model receives: { exit_code: 0, stdout: "&lt;16 KiB&gt;", truncated: true }</text>
+      </svg>
+    </div>
+    <figcaption>A command that prints 100 KB, such as <code>yes | head -c 100000</code>. The command finishes normally because the pipe is always emptied.</figcaption>
+  </figure>
+
+  <div class="toy" id="pipe-toy">
+    <h3>Try it: why capture keeps reading</h3>
+    <p>A command writes output into a pipe. The buffer size here (64 KB) is an illustration; real sizes vary by system.</p>
+    <div class="row">
+      <label for="outkb">Command output: <b id="outkb-val" class="mono">120 KB</b></label>
+      <input id="outkb" type="range" min="0" max="200" value="120" aria-describedby="pipe-status">
+    </div>
+    <div class="row">
+      <label for="drain"><input id="drain" type="checkbox" checked> <span><code>capture()</code> keeps reading</span></label>
+    </div>
+    <div class="meter" id="meter" role="img" aria-label="Pipe buffer fill"><i id="fill"></i></div>
+    <div class="meter-label"><span id="buf-text">buffer 0 / 64 KB</span><span>full at 64 KB</span></div>
+    <div class="status ok" id="pipe-status" aria-live="polite"></div>
+    <div class="stats">
+      <div><b>kept for the model</b><span id="s-kept">0</span></div>
+      <div><b>dropped</b><span id="s-drop">0</span></div>
+      <div><b>truncated flag</b><span id="s-trunc">false</span></div>
+    </div>
+  </div>
+
+  <h2 id="paths">Paths, symlinks and <code>realpath</code></h2>
+  <p>A <strong>symlink</strong> is a path that points at another path, like a shortcut. On macOS, <code>/var</code> is a symlink to <code>/private/var</code>, and <code>os.tmpdir()</code> returns a path that starts with <code>/var/folders/…</code>.</p>
+  <p>Seatbelt matches the <em>resolved</em> path, the one the kernel ends up at after following every symlink. A rule written with the shortcut spelling would never match anything. <code>realpath()</code> asks the filesystem for the resolved spelling, and <code>runSandboxed</code> uses it on the project, temp and home folders before it builds the profile.</p>
+
+  <figure>
+    <div class="fig-scroll">
+      <svg viewBox="0 0 760 170" role="img" aria-label="os.tmpdir returns a path under var, which is a symlink to private var. A rule using the unresolved path never matches. A rule using the resolved path matches.">
+        <defs>
+          <marker id="ar4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" class="mk"/></marker>
+        </defs>
+        <rect x="16" y="20" width="290" height="56" rx="6" class="sv-box"/>
+        <text x="161" y="44" text-anchor="middle" class="sv-t" style="font-family:var(--mono);font-size:12.5px">/var/folders/ab/T</text>
+        <text x="161" y="62" text-anchor="middle" class="sv-s">what os.tmpdir() returns</text>
+        <rect x="454" y="20" width="290" height="56" rx="6" class="sv-kbox"/>
+        <text x="599" y="44" text-anchor="middle" class="sv-t" style="font-family:var(--mono);font-size:12.5px">/private/var/folders/ab/T</text>
+        <text x="599" y="62" text-anchor="middle" class="sv-s">what the kernel checks</text>
+        <line x1="306" y1="48" x2="452" y2="48" class="sv-line" marker-end="url(#ar4)"/>
+        <text x="380" y="38" text-anchor="middle" class="sv-s sv-halo">realpath()</text>
+        <text x="380" y="68" text-anchor="middle" class="sv-s sv-halo">/var → /private/var</text>
+        <text x="16" y="116" class="t-no">(subpath "/var/folders/ab/T")</text>
+        <text x="330" y="116" class="t-no">never matches: wrong spelling</text>
+        <text x="16" y="146" class="t-ok">(subpath "/private/var/folders/ab/T")</text>
+        <text x="330" y="146" class="t-ok" style="font-size:12px">matches: same path the kernel sees</text>
+      </svg>
+    </div>
+    <figcaption>The profile must use the spelling the kernel sees. The same applies to the project folder and home folder if either is reached through a symlink.</figcaption>
+  </figure>
+
+  <h2 id="profiles">Reading a Seatbelt profile</h2>
+  <p>A profile is an ordered list of rules. Each rule says allow or deny, for one kind of operation, optionally limited to certain paths. Two ideas explain every profile:</p>
+  <ul>
+    <li><strong>The last matching rule wins.</strong> That is why <code>deny file-write*</code> comes first and the exceptions after it.</li>
+    <li><strong>The first rule is <code>allow default</code>.</strong> Everything is allowed until a later rule says otherwise. The harness lists what it takes away.</li>
+  </ul>
+  <p><code>(subpath X)</code> matches X and everything under it. <code>(literal X)</code> matches exactly X. <code>(regex …)</code> matches by pattern.</p>
+
+  <div class="toy" id="rule-toy">
+    <h3>Try it: ask the profile a question</h3>
+    <p>Pick something a command might try. The page runs the same last-match-wins logic the kernel uses, against the six rules <code>buildProfile</code> generates. Project folder: <code>/Users/you/project</code>.</p>
+    <div class="row">
+      <label for="scn">The command tries to:
+        <select id="scn"></select>
+      </label>
+    </div>
+    <div class="row">
+      <label for="real"><input id="real" type="checkbox" checked> <span>profile built with <code>realpath()</code></span></label>
+    </div>
+    <p class="kv" id="kv"></p>
+    <ol class="rules" id="rules"></ol>
+    <div class="status" id="verdict" aria-live="polite"></div>
+  </div>
+
+  <h2 id="signals">Time limits, signals and the pipe that stays open</h2>
+  <p>A <strong>signal</strong> is a small message the kernel delivers to a process. Most can be caught or ignored. <code>SIGKILL</code> cannot: the process is ended on the spot. After 30 seconds the harness sends it to <code>bash</code>, and the result carries <code>timed_out: true</code>.</p>
+  <p>Killing <code>bash</code> does not kill what it started. Suppose the command is <code>sleep 100 &amp; echo started</code>. The shell finishes at once, but <code>sleep</code> inherited the pipe, so the pipe's write end stays open. A pipe only reports end-of-file when <em>every</em> writer has closed it. If the harness waited for end-of-file, it would wait 100 seconds. So after <code>bash</code> exits it gives the pipes 200 ms to finish and then stops reading.</p>
+
+  <figure>
+    <div class="fig-scroll">
+      <svg viewBox="0 0 760 232" role="img" aria-label="Timeline. Bash exits early. A background sleep keeps the pipe open. The harness waits 200 milliseconds after bash exits, then stops reading, instead of waiting as long as the sleep runs.">
+        <text x="16" y="40" class="sv-s">bash</text>
+        <rect x="190" y="26" width="130" height="20" rx="4" class="sv-bar"/>
+        <text x="255" y="40" text-anchor="middle" class="sv-s">running</text>
+        <text x="16" y="88" class="sv-s">sleep 100 &amp;</text>
+        <rect x="250" y="74" width="480" height="20" rx="4" class="sv-bar"/>
+        <text x="490" y="88" text-anchor="middle" class="sv-s">keeps running after bash is gone</text>
+        <text x="16" y="136" class="sv-s">pipe write end</text>
+        <rect x="190" y="122" width="540" height="20" rx="4" class="sv-kbar"/>
+        <text x="460" y="136" text-anchor="middle" class="sv-s">still open, so end-of-file never arrives</text>
+        <text x="16" y="184" class="sv-s">harness</text>
+        <rect x="320" y="170" width="40" height="20" rx="4" class="sv-kbar"/>
+        <text x="372" y="184" class="sv-p">waits 200 ms, stops reading, returns</text>
+        <line x1="360" y1="204" x2="730" y2="204" class="sv-line" stroke-dasharray="4 4" marker-end="url(#ar5)"/>
+        <text x="545" y="222" text-anchor="middle" class="sv-s">without the limit: waits for the sleep</text>
+        <line x1="320" y1="14" x2="320" y2="196" class="sv-guide"/>
+        <text x="320" y="10" text-anchor="middle" class="sv-s">bash exits</text>
+        <defs>
+          <marker id="ar5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" class="mk"/></marker>
+        </defs>
+      </svg>
+    </div>
+    <figcaption>The cost of the 200 ms limit: output from a background job that arrives later is lost, and the orphaned <code>sleep</code> keeps running. A full process-group killer is outside this milestone.</figcaption>
+  </figure>
+
+  <h2>Code map</h2>
+  <p>Each line of <code>sandbox.ts</code> that looked mysterious, next to the operating-system idea behind it.</p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>In the code</th><th>What the OS is doing</th></tr></thead>
+      <tbody>
+        <tr><td>realpath(rootDir)</td><td>Resolves symlinks so profile paths match the kernel's view.</td></tr>
+        <tr><td>sandbox-exec -p profile bash -c cmd</td><td>The launcher attaches the Seatbelt profile to itself, then <code>exec</code>s bash. Children inherit it.</td></tr>
+        <tr><td>stdin: "ignore"</td><td>File descriptor 0 points at <code>/dev/null</code>, so reads return end-of-file immediately.</td></tr>
+        <tr><td>env: { PATH, HOME, … }</td><td>The child gets only the listed environment variables.</td></tr>
+        <tr><td>capture(stream, max)</td><td>Drains a pipe so the child never blocks on a full buffer. Keeps the first 16 KiB.</td></tr>
+        <tr><td>proc.kill("SIGKILL")</td><td>Sends a signal that cannot be ignored. It reaches bash only.</td></tr>
+        <tr><td>Promise.race([…, Bun.sleep(200)])</td><td>Stops waiting for a pipe that a leftover background process still holds open.</td></tr>
+        <tr><td>"Operation not permitted"</td><td>The kernel returned <code>EPERM</code> because a Seatbelt deny rule matched.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <details>
+    <summary>Glossary</summary>
+    <dl>
+      <dt>kernel</dt><dd>The core of the operating system. The only code allowed to touch hardware directly.</dd>
+      <dt>process</dt><dd>A running program, started by a parent process.</dd>
+      <dt>syscall</dt><dd>A request from a program to the kernel, such as open, write or connect.</dd>
+      <dt>exec</dt><dd>Replace the program inside a process with a different one, keeping the same process.</dd>
+      <dt>file descriptor</dt><dd>The number a process uses to refer to an open file, pipe or device. 0, 1 and 2 are stdin, stdout and stderr.</dd>
+      <dt>pipe</dt><dd>A small kernel buffer that connects one process's output to another's input.</dd>
+      <dt>EOF</dt><dd>End-of-file. A read returns it when there is no more data and nobody can write more.</dd>
+      <dt>signal</dt><dd>A message from the kernel to a process. SIGKILL ends it immediately.</dd>
+      <dt>symlink</dt><dd>A path that redirects to another path.</dd>
+      <dt>Seatbelt</dt><dd>macOS's kernel sandbox. Its profiles are written in a Scheme-like language called SBPL.</dd>
+      <dt>EPERM</dt><dd>The error code for a refused operation, shown as "Operation not permitted".</dd>
+    </dl>
+  </details>
+</main>
+
+<script>
+(function () {
+  /* Pipe buffer toy */
+  var BUF = 64, KEEP = 16;
+  var out = document.getElementById("outkb"), drain = document.getElementById("drain");
+  var fill = document.getElementById("fill"), meter = document.getElementById("meter");
+  function pipeUpdate() {
+    var n = +out.value, reading = drain.checked;
+    document.getElementById("outkb-val").textContent = n + " KB";
+    var stuck = !reading && n > BUF;
+    var inBuf = reading ? 0 : Math.min(n, BUF);
+    fill.style.width = (inBuf / BUF * 100) + "%";
+    meter.classList.toggle("full", stuck);
+    meter.setAttribute("aria-label", "Pipe buffer " + inBuf + " of " + BUF + " kilobytes full");
+    document.getElementById("buf-text").textContent = "buffer " + inBuf + " / " + BUF + " KB";
+    var st = document.getElementById("pipe-status");
+    var kept = reading ? Math.min(n, KEEP) : 0;
+    var dropped = reading ? Math.max(0, n - KEEP) : 0;
+    if (reading) {
+      st.className = "status ok";
+      st.textContent = n === 0 ? "The command wrote nothing and exited." : "The reader drains the pipe as fast as the command writes. The command finishes normally.";
+    } else if (stuck) {
+      st.className = "status bad";
+      st.textContent = "The buffer is full and nobody reads. The command's next write blocks, so it hangs until the 30 second timeout kills it.";
+    } else {
+      st.className = "status ok";
+      st.textContent = "Small enough to fit in the buffer, so the command exits. Nobody read it, though, so the model would see nothing.";
+    }
+    document.getElementById("s-kept").textContent = kept + " KB";
+    document.getElementById("s-drop").textContent = dropped + " KB";
+    document.getElementById("s-trunc").textContent = String(reading && n > KEEP);
+  }
+  out.addEventListener("input", pipeUpdate);
+  drain.addEventListener("change", pipeUpdate);
+  pipeUpdate();
+
+  /* Seatbelt rule toy */
+  var ROOT = "/Users/you/project", HOME = "/Users/you";
+  var TMP_RAW = "/var/folders/ab/T", TMP_REAL = "/private/var/folders/ab/T";
+  var scenarios = [
+    { label: "read a source file in the project", op: "read", asked: ROOT + "/src/app.ts" },
+    { label: "write a new file in the project", op: "write", asked: ROOT + "/notes.txt" },
+    { label: "write a file on the Desktop", op: "write", asked: HOME + "/Desktop/x.txt" },
+    { label: "read ~/.ssh/id_ed25519", op: "read", asked: HOME + "/.ssh/id_ed25519" },
+    { label: "read through a symlink that points into ~/.ssh", op: "read", asked: ROOT + "/ssh-link/key", kernel: HOME + "/.ssh/key" },
+    { label: "read the project's .env", op: "read", asked: ROOT + "/.env" },
+    { label: "read the project's .env.example", op: "read", asked: ROOT + "/.env.example" },
+    { label: "write a scratch file in $TMPDIR", op: "write", asked: TMP_RAW + "/scratch.txt", kernel: TMP_REAL + "/scratch.txt" },
+    { label: "write to /tmp directly", op: "write", asked: "/tmp/scratch.txt", kernel: "/private/tmp/scratch.txt" },
+    { label: "connect to localhost:8080", op: "net", asked: "127.0.0.1:8080" },
+    { label: "read a system binary, /usr/bin/ls", op: "read", asked: "/usr/bin/ls" }
+  ];
+  function under(p, base) { return p === base || p.indexOf(base + "/") === 0; }
+  function rulesFor(real) {
+    var tmp = real ? TMP_REAL : TMP_RAW;
+    return [
+      { text: "(allow default)", verdict: "allow", test: function () { return true; } },
+      { text: "(deny file-write*)", verdict: "deny", test: function (o) { return o === "write"; } },
+      { text: '(allow file-write* (subpath "' + ROOT + '") (subpath "' + tmp + '") (literal "/dev/null"))', verdict: "allow",
+        test: function (o, p) { return o === "write" && (under(p, ROOT) || under(p, tmp) || p === "/dev/null"); } },
+      { text: "(deny network*)", verdict: "deny", test: function (o) { return o === "net"; } },
+      { text: '(deny file-read* (subpath "' + HOME + '/.ssh") (subpath "' + HOME + '/.aws") (regex #"/\\.env(\\..*)?$"))', verdict: "deny",
+        test: function (o, p) { return o === "read" && (under(p, HOME + "/.ssh") || under(p, HOME + "/.aws") || /\/\.env(\..*)?$/.test(p)); } },
+      { text: '(allow file-read* (literal "' + ROOT + '/.env.example"))', verdict: "allow",
+        test: function (o, p) { return o === "read" && p === ROOT + "/.env.example"; } }
+    ];
+  }
+  var sel = document.getElementById("scn"), real = document.getElementById("real");
+  scenarios.forEach(function (s, i) {
+    var o = document.createElement("option"); o.value = i; o.textContent = s.label; sel.appendChild(o);
+  });
+  function ruleUpdate() {
+    var s = scenarios[+sel.value], rules = rulesFor(real.checked);
+    var kpath = s.kernel || s.asked;
+    var rawTmp = s.asked.indexOf(TMP_RAW) === 0;
+    if (rawTmp && !real.checked) kpath = TMP_REAL + "/scratch.txt";
+    document.getElementById("kv").innerHTML = (s.kernel && s.kernel !== s.asked
+      ? "program asks for <b>" + s.asked + "</b><br>kernel checks <b>" + kpath + "</b> (symlinks resolved)"
+      : "kernel checks <b>" + kpath + "</b>");
+    var winner = -1;
+    var hits = rules.map(function (r, i) { var h = r.test(s.op, kpath); if (h) winner = i; return h; });
+    var ol = document.getElementById("rules"); ol.innerHTML = "";
+    rules.forEach(function (r, i) {
+      var li = document.createElement("li");
+      li.className = (hits[i] ? "hit " : "") + (i === winner ? "win " + r.verdict : "");
+      var n = document.createElement("span"); n.className = "n"; n.textContent = (i + 1);
+      var c = document.createElement("code"); c.textContent = r.text;
+      var t = document.createElement("span"); t.className = "tag";
+      li.appendChild(n); li.appendChild(c); li.appendChild(t); ol.appendChild(li);
+    });
+    var v = document.getElementById("verdict"), w = rules[winner];
+    v.className = "status " + (w.verdict === "allow" ? "ok" : "bad");
+    var msg = (w.verdict === "allow" ? "Allowed" : "Denied") + " by rule " + (winner + 1) + ".";
+    if (w.verdict === "deny") msg += " The program sees EPERM, \"Operation not permitted\".";
+    if (s.asked.indexOf("/tmp/") === 0) msg += " Only the folder in $TMPDIR is writable, not /tmp itself.";
+    if (rawTmp && !real.checked && w.verdict === "deny") msg += " The rule was written with /var, but the kernel checks /private/var.";
+    v.textContent = msg;
+  }
+  sel.addEventListener("change", ruleUpdate);
+  real.addEventListener("change", ruleUpdate);
+  sel.value = 3;
+  ruleUpdate();
+})();
+</script>
+</body>
+</html>
