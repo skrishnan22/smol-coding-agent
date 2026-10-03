@@ -53,7 +53,7 @@ export function createOpenAIClient(options: OpenAIClientOptions): OpenAIClient {
         tools: [READ_FILE_TOOL, BASH_TOOL],
         reasoning: { effort: "none" },
         store: false,
-        parallel_tool_calls: false,
+        parallel_tool_calls: true,
         max_output_tokens: 800,
       } satisfies OpenAIRequestBody
 

@@ -69,7 +69,7 @@ export type OpenAIRequestBody = {
   tools: readonly OpenAITool[]
   reasoning: { effort: "none" }
   store: false
-  parallel_tool_calls: false
+  parallel_tool_calls: true
   max_output_tokens: number
 }
 

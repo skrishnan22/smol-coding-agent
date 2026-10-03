@@ -176,48 +176,6 @@ test("runTurn returns a tool error to the model and continues after tool_failed"
   })
 })
 
-test("runTurn fails visibly on multiple function_calls without appending them", async () => {
-  const client = scriptedClient([
-    {
-      id: "resp_1",
-      status: "completed",
-      text: "",
-      output: [
-        {
-          type: "function_call",
-          call_id: "call_1",
-          name: "read_file",
-          arguments: '{"path":"a.txt"}',
-        },
-        {
-          type: "function_call",
-          call_id: "call_2",
-          name: "read_file",
-          arguments: '{"path":"b.txt"}',
-        },
-      ],
-      usage: { inputTokens: 9, outputTokens: 6, estimatedCostUsd: 0.000009 },
-    },
-  ])
-
-  const events: TurnEvent[] = []
-  const result = await runTurn({
-    prompt: "Read two files",
-    context: [],
-    client,
-    rootDir: process.cwd(),
-    onEvent: (event) => events.push(event),
-  })
-
-  expect(result.context).toEqual([createUserMessage("Read two files")])
-  expect(events.map((event) => event.type)).toEqual(["model_started", "usage_recorded", "turn_failed"])
-  expect(events.at(-1)).toEqual({
-    type: "turn_failed",
-    message: "Unsupported response: 2 function calls in one turn",
-  })
-})
-
-
 test("runTurn stops after the provider-call limit", async () => {
   const functionCall = {
     type: "function_call",

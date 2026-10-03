@@ -5,6 +5,8 @@ export const DEVELOPER_GUIDANCE = [
   "You have two tools: read_file reads one UTF-8 text file under the process startup directory (exactly { \"path\": string }, relative),",
   "and bash runs one command in a fresh sandboxed shell (exactly { \"command\": string }).",
   "Every call is stateless. Use a tool when you need to inspect or change files; answer directly when you do not.",
+  "When you need several independent files, request all the read_file calls in one response so they run together.",
+  "bash calls always run one at a time.",
 ].join(" ")
 
 export function createDeveloperMessage(content: string = DEVELOPER_GUIDANCE): DeveloperInputMessage {

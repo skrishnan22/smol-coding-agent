@@ -56,7 +56,7 @@ test("sends one stateless Responses API request and parses its result", async ()
     tools: [READ_FILE_TOOL, BASH_TOOL],
     reasoning: { effort: "none" },
     store: false,
-    parallel_tool_calls: false,
+    parallel_tool_calls: true,
     max_output_tokens: 800,
   })
   expect(result).toEqual({
@@ -93,7 +93,7 @@ test("sends one stateless Responses API request and parses its result", async ()
       tools: [READ_FILE_TOOL, BASH_TOOL],
       reasoning: { effort: "none" },
       store: false,
-      parallel_tool_calls: false,
+      parallel_tool_calls: true,
       max_output_tokens: 800,
     },
     usage: { inputTokens: 120, outputTokens: 30, estimatedCostUsd: 0.00006 },

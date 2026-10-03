@@ -44,25 +44,45 @@ export type RunTurnResult = {
 
 type ToolExecutor = (rawArguments: string, rootDir: string) => Promise<ToolResult>
 
+type Tool = {
+  execute: ToolExecutor
+  /**
+   * Whether calls to this tool may run alongside other calls. read_file only reads, so it can.
+   * bash can touch anything, and nothing tells us which files, so it cannot.
+   */
+  parallelSafe: boolean
+}
+
 const defaultExecuteReadFile: ToolExecutor = (rawArguments, rootDir) => readFile(rawArguments, { rootDir })
 const defaultExecuteBash: ToolExecutor = (rawArguments, rootDir) => runBash(rawArguments, { rootDir })
+
+function failure(error: string): ToolResult {
+  return { ok: false, error, output: JSON.stringify({ error }) }
+}
 
 async function executeTool(
   call: ParsedFunctionCall,
   rootDir: string,
-  executors: Record<string, ToolExecutor>,
+  tools: Record<string, Tool>,
 ): Promise<ToolResult> {
-  const execute = executors[call.name]
-  if (execute === undefined) {
-    const error = `unknown tool: ${call.name}`
-    return { ok: false, error, output: JSON.stringify({ error }) }
+  const tool = tools[call.name]
+  if (tool === undefined) return failure(`unknown tool: ${call.name}`)
+
+  try {
+    return await tool.execute(call.arguments, rootDir)
+  } catch (cause) {
+    // One crashing tool must not reject Promise.all and lose its siblings' results.
+    return failure(`tool crashed: ${cause instanceof Error ? cause.message : String(cause)}`)
   }
-  return execute(call.arguments, rootDir)
 }
 
 /**
- * One user turn: call the model, optionally run one tool, continue until final text.
+ * One user turn: call the model, run any tool calls it asks for, continue until final text.
  * Emits ordered events for the UI; returns the updated model context.
+ *
+ * When a response holds several calls, they run together only if every call is to a
+ * parallel-safe tool. Otherwise the whole batch runs one by one, in order. Either way the
+ * outputs go back to the model in call order, not completion order.
  */
 export async function runTurn({
   prompt,
@@ -74,11 +94,25 @@ export async function runTurn({
   executeReadFile = defaultExecuteReadFile,
   executeBash = defaultExecuteBash,
 }: RunTurnOptions): Promise<RunTurnResult> {
-  const executors: Record<string, ToolExecutor> = {
-    read_file: executeReadFile,
-    bash: executeBash,
+  const tools: Record<string, Tool> = {
+    read_file: { execute: executeReadFile, parallelSafe: true },
+    bash: { execute: executeBash, parallelSafe: false },
   }
   let context = appendUserMessage(initialContext, prompt)
+
+  const emitStarted = (call: ParsedFunctionCall) =>
+    onEvent({ type: "tool_started", callId: call.callId, name: call.name, rawArguments: call.arguments })
+
+  /** Run one call and report how it ended as soon as it does. */
+  const runCall = async (call: ParsedFunctionCall): Promise<ToolResult> => {
+    const toolResult = await executeTool(call, rootDir, tools)
+    if (toolResult.ok) {
+      onEvent({ type: "tool_finished", callId: call.callId, output: toolResult.output, summary: toolResult.summary })
+    } else {
+      onEvent({ type: "tool_failed", callId: call.callId, error: toolResult.error })
+    }
+    return toolResult
+  }
 
   for (let providerCalls = 0; providerCalls < maxProviderCalls; providerCalls += 1) {
     onEvent({ type: "model_started" })
@@ -99,44 +133,30 @@ export async function runTurn({
       estimatedCostUsd: result.usage.estimatedCostUsd,
     })
 
-    const calls = listFunctionCalls(result.output)
-    if (calls.length > 1) {
-      onEvent({
-        type: "turn_failed",
-        message: `Unsupported response: ${calls.length} function calls in one turn`,
-      })
-      return { context }
-    }
-
+    // The provider needs to see its own calls before it sees their outputs.
     context = appendResponseOutput(context, result.output)
 
-    if (calls.length === 1) {
-      const call = calls[0]!
-      onEvent({
-        type: "tool_started",
-        callId: call.callId,
-        name: call.name,
-        rawArguments: call.arguments,
-      })
+    const calls = listFunctionCalls(result.output)
+    if (calls.length > 0) {
+      const runTogether = calls.length > 1 && calls.every((call) => tools[call.name]?.parallelSafe === true)
 
-      const toolResult = await executeTool(call, rootDir, executors)
-      context = appendFunctionCallOutput(context, call.callId, toolResult.output)
-
-      if (toolResult.ok) {
-        onEvent({
-          type: "tool_finished",
-          callId: call.callId,
-          output: toolResult.output,
-          summary: toolResult.summary,
-        })
+      let results: ToolResult[]
+      if (runTogether) {
+        // Every card shows as running at once; Promise.all keeps results in call order.
+        calls.forEach(emitStarted)
+        results = await Promise.all(calls.map(runCall))
       } else {
-        onEvent({
-          type: "tool_failed",
-          callId: call.callId,
-          error: toolResult.error,
-        })
+        // A card only shows as running when its turn comes.
+        results = []
+        for (const call of calls) {
+          emitStarted(call)
+          results.push(await runCall(call))
+        }
       }
 
+      calls.forEach((call, index) => {
+        context = appendFunctionCallOutput(context, call.callId, results[index]!.output)
+      })
       continue
     }
 
