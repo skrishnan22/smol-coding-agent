@@ -1,7 +1,7 @@
 import { createCliRenderer } from "@opentui/core"
 import { createRoot, useKeyboard } from "@opentui/react"
 import { useCallback, useMemo, useRef, useState } from "react"
-import { runTurn, type TurnEvent } from "./agent-loop.js"
+import { runTurn, type QueuedKind, type TurnEvent } from "./agent-loop.js"
 import { createJsonlSink } from "./logging/jsonl.js"
 import { createInitialModelContext } from "./model-context.js"
 import { createOpenAIClient } from "./openai/client.js"
@@ -23,6 +23,9 @@ export type TranscriptItem =
       output?: string
     }
 
+/** A message typed while a turn runs. It leaves this list when the loop injects it. */
+export type QueuedMessage = { id: string; kind: QueuedKind; text: string }
+
 export type Usage = {
   inputTokens: number
   outputTokens: number
@@ -35,7 +38,9 @@ type HarnessViewProps = {
   items: readonly TranscriptItem[]
   busy: boolean
   usage: Usage
-  onSubmit: (prompt: string) => void
+  queued?: readonly QueuedMessage[]
+  /** Enter sends a follow_up; Ctrl+S sends steering. When idle both just start a turn. */
+  onSubmit: (prompt: string, kind: QueuedKind) => void
 }
 
 function toolExpanded(
@@ -108,7 +113,7 @@ function TranscriptRow({
   }
 }
 
-export function HarnessView({ items, busy, usage, onSubmit }: HarnessViewProps) {
+export function HarnessView({ items, busy, usage, queued = [], onSubmit }: HarnessViewProps) {
   const [draft, setDraft] = useState("")
   const [focus, setFocus] = useState<FocusTarget>("prompt")
   const [expandedCallIds, setExpandedCallIds] = useState<ReadonlySet<string>>(() => new Set())
@@ -131,7 +136,25 @@ export function HarnessView({ items, busy, usage, onSubmit }: HarnessViewProps) 
     [focus, focusableToolIds],
   )
 
+  const submit = useCallback(
+    (kind: QueuedKind) => {
+      const prompt = draft.trim()
+      if (prompt.length === 0 || focus !== "prompt") return
+
+      setDraft("")
+      setFocus("prompt")
+      onSubmit(prompt, kind)
+    },
+    [draft, focus, onSubmit],
+  )
+
   useKeyboard((key) => {
+    // Works while a turn runs: this is how you steer. Enter (below, on the input) queues a follow-up.
+    if (key.ctrl && key.name === "s") {
+      submit("steering")
+      return
+    }
+
     if (busy) return
 
     if (key.name === "tab") {
@@ -149,18 +172,6 @@ export function HarnessView({ items, busy, usage, onSubmit }: HarnessViewProps) 
     }
   })
 
-  const submit = useCallback(
-    () => {
-      const prompt = draft.trim()
-      if (prompt.length === 0 || busy || focus !== "prompt") return
-
-      setDraft("")
-      setFocus("prompt")
-      onSubmit(prompt)
-    },
-    [busy, draft, focus, onSubmit],
-  )
-
   return (
     <box style={{ flexDirection: "column", padding: 1 }}>
       <text content={busy ? "AI harness · running" : "AI harness"} style={{ fg: "#8fbcff" }} />
@@ -172,27 +183,38 @@ export function HarnessView({ items, busy, usage, onSubmit }: HarnessViewProps) 
         contentOptions={{ paddingRight: 1 }}
         verticalScrollbarOptions={{ visible: true }}
       >
-        {items.length === 0 ? (
+        {items.length === 0 && queued.length === 0 ? (
           <text content="Messages and tool calls will appear here." style={{ fg: "#8c94a3" }} />
         ) : (
-          items.map((item) => (
-            <TranscriptRow
-              key={item.id}
-              item={item}
-              focused={item.kind === "tool" && focus === item.callId}
-              expanded={item.kind === "tool" ? toolExpanded(item, expandedCallIds) : false}
-            />
-          ))
+          <>
+            {items.map((item) => (
+              <TranscriptRow
+                key={item.id}
+                item={item}
+                focused={item.kind === "tool" && focus === item.callId}
+                expanded={item.kind === "tool" ? toolExpanded(item, expandedCallIds) : false}
+              />
+            ))}
+            {queued.map((message) => (
+              <box key={message.id} style={{ flexDirection: "column", marginBottom: 1 }}>
+                <text
+                  content={`QUEUED · ${message.kind === "steering" ? "steering" : "follow-up"}`}
+                  style={{ fg: "#e0af68" }}
+                />
+                <text content={message.text} wrapMode="word" style={{ fg: "#8c94a3" }} />
+              </box>
+            ))}
+          </>
         )}
       </scrollbox>
 
-      <box title={busy ? "Running" : focus === "prompt" ? "Prompt" : "Prompt (Tab)"} style={{ border: true, height: 3 }}>
+      <box title={busy ? "Running · Enter queues follow-up · Ctrl+S steers" : focus === "prompt" ? "Prompt" : "Prompt (Tab)"} style={{ border: true, height: 3 }}>
         <input
           value={draft}
-          placeholder={busy ? "Waiting for the agent" : "Ask the harness"}
-          focused={!busy && focus === "prompt"}
+          placeholder={busy ? "Type to queue or steer" : "Ask the harness"}
+          focused={focus === "prompt"}
           onInput={setDraft}
-          onSubmit={submit}
+          onSubmit={() => submit("follow_up")}
         />
       </box>
 
@@ -212,17 +234,24 @@ type AppProps = {
 
 export function App({ client }: AppProps) {
   const [items, setItems] = useState<TranscriptItem[]>([])
+  const [queued, setQueued] = useState<QueuedMessage[]>([])
   const [busy, setBusy] = useState(false)
   const [usage, setUsage] = useState(EMPTY_USAGE)
   const nextId = useRef(0)
   // Model context is provider input state, not UI transcript state.
   const modelContext = useRef<ModelInputItem[]>(createInitialModelContext())
+  // The loop reads these queues at its drain points. `queued` (state) is only what the UI shows.
+  const busyRef = useRef(false)
+  const queues = useRef<Record<QueuedKind, string[]>>({ steering: [], follow_up: [] })
 
-  const onSubmit = useCallback(
+  const takeQueue = (kind: QueuedKind) => queues.current[kind].splice(0)
+
+  const startTurn = useCallback(
     (prompt: string) => {
       nextId.current += 1
       const userItem: TranscriptItem = { id: `local-${nextId.current}`, kind: "user", text: prompt }
       setItems((current) => [...current, userItem])
+      busyRef.current = true
       setBusy(true)
 
       const handleEvent = (event: TurnEvent) => {
@@ -284,6 +313,18 @@ export function App({ client }: AppProps) {
               },
             ])
             return
+          case "message_injected":
+            // It stops being pending and joins the conversation at the point the model saw it.
+            nextId.current += 1
+            setQueued((current) => {
+              const index = current.findIndex((message) => message.kind === event.kind)
+              return index < 0 ? current : current.filter((_, i) => i !== index)
+            })
+            setItems((current) => [
+              ...current,
+              { id: `local-${nextId.current}`, kind: "user", text: event.text },
+            ])
+            return
           case "turn_failed":
             nextId.current += 1
             setItems((current) => [
@@ -304,6 +345,8 @@ export function App({ client }: AppProps) {
         client,
         rootDir: process.cwd(),
         onEvent: handleEvent,
+        takeSteering: () => takeQueue("steering"),
+        takeFollowUp: () => takeQueue("follow_up"),
       })
         .then((result) => {
           modelContext.current = result.context
@@ -317,13 +360,40 @@ export function App({ client }: AppProps) {
           ])
         })
         .finally(() => {
+          busyRef.current = false
           setBusy(false)
+
+          // A turn that ended early (an error) can leave messages the loop never reached.
+          // Do not drop what the user typed: the oldest becomes the next prompt, the rest stay queued.
+          const kind: QueuedKind | undefined = (["steering", "follow_up"] as const).find(
+            (candidate) => queues.current[candidate].length > 0,
+          )
+          if (kind === undefined) return
+          const next = queues.current[kind].shift()!
+          setQueued((current) => {
+            const index = current.findIndex((message) => message.kind === kind)
+            return index < 0 ? current : current.filter((_, i) => i !== index)
+          })
+          startTurn(next)
         })
     },
     [client],
   )
 
-  return <HarnessView items={items} busy={busy} usage={usage} onSubmit={onSubmit} />
+  const onSubmit = useCallback(
+    (prompt: string, kind: QueuedKind) => {
+      if (!busyRef.current) {
+        startTurn(prompt)
+        return
+      }
+      queues.current[kind].push(prompt)
+      nextId.current += 1
+      setQueued((current) => [...current, { id: `local-${nextId.current}`, kind, text: prompt }])
+    },
+    [startTurn],
+  )
+
+  return <HarnessView items={items} busy={busy} usage={usage} queued={queued} onSubmit={onSubmit} />
 }
 
 if (import.meta.main) {

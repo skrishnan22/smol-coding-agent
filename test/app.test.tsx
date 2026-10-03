@@ -189,7 +189,7 @@ test("submitting a prompt calls OpenAI once and shows the assistant reply", asyn
   expect(frame).toContain("YOU")
   expect(frame).toContain("Explain the loop")
   expect(frame).toContain("AI harness · running")
-  expect(frame).toContain("Waiting for the agent")
+  expect(frame).toContain("Type to queue or steer")
   expect(calls).toEqual([[...createInitialModelContext(), createUserMessage("Explain the loop")]])
 
   const firstOutput = [
