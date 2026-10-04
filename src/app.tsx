@@ -1,6 +1,6 @@
-import { createCliRenderer } from "@opentui/core"
+import { createCliRenderer, SyntaxStyle, type ScrollBoxRenderable } from "@opentui/core"
 import { createRoot, useKeyboard } from "@opentui/react"
-import { useCallback, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { runTurn, type QueuedKind, type TurnEvent } from "./agent-loop.js"
 import { createJsonlSink } from "./logging/jsonl.js"
 import { createInitialModelContext } from "./model-context.js"
@@ -53,6 +53,75 @@ function headerText(model: ModelInfo | undefined, busy: boolean): string {
   return parts.join(" · ")
 }
 
+const MARKDOWN_STYLE = SyntaxStyle.fromStyles({
+  default: { fg: "#c0caf5" },
+  "markup.heading": { fg: "#7aa2f7", bold: true },
+  "markup.strong": { bold: true },
+  "markup.italic": { italic: true },
+  "markup.raw": { fg: "#e0af68" },
+  "markup.link": { fg: "#7dcfff", underline: true },
+  "markup.link.url": { fg: "#7dcfff", underline: true },
+  "markup.list": { fg: "#bb9af7" },
+  keyword: { fg: "#bb9af7", italic: true },
+  string: { fg: "#9ece6a" },
+  comment: { fg: "#565f89", italic: true },
+  number: { fg: "#ff9e64" },
+  function: { fg: "#7aa2f7" },
+  type: { fg: "#2ac3de" },
+  operator: { fg: "#89ddff" },
+  punctuation: { fg: "#89ddff" },
+})
+
+const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+function ThinkingIndicator() {
+  const [frame, setFrame] = useState(0)
+
+  useEffect(() => {
+    const timer = setInterval(() => setFrame((current) => (current + 1) % SPINNER_FRAMES.length), 80)
+    return () => clearInterval(timer)
+  }, [])
+
+  return <text content={`${SPINNER_FRAMES[frame]} thinking…`} style={{ fg: "#8c94a3" }} marginBottom={1} />
+}
+
+const ARG_PREVIEW_CHARS = 60
+const EXPANDED_INPUT_CHARS = 300
+const EXPANDED_OUTPUT_CHARS = 600
+const EXPANDED_OUTPUT_LINES = 12
+
+const oneLine = (text: string) => text.replace(/\s+/g, " ").trim()
+
+function truncate(text: string, maxChars: number): string {
+  return text.length <= maxChars ? text : `${text.slice(0, maxChars - 1)}…`
+}
+
+/** The argument worth showing: the command or path when there is one, else the raw JSON. */
+function describeArgs(rawArguments: string): string {
+  try {
+    const parsed: unknown = JSON.parse(rawArguments)
+    if (typeof parsed === "object" && parsed !== null) {
+      const { command, path } = parsed as Record<string, unknown>
+      if (typeof command === "string") return command
+      if (typeof path === "string") return path
+    }
+  } catch {
+    // Arguments that are not JSON are shown as-is below.
+  }
+  return rawArguments
+}
+
+/** Long output stays available but does not take over the transcript. */
+function clipBlock(text: string, maxChars: number, maxLines: number): string {
+  const lines = text.split("\n")
+  const byLines = lines.length > maxLines ? lines.slice(0, maxLines).join("\n") : text
+  const clipped = byLines.length > maxChars ? byLines.slice(0, maxChars) : byLines
+  const hidden = text.length - clipped.length
+  return hidden > 0 ? `${clipped}\n… ${hidden} more chars` : clipped
+}
+
+const assistantRowId = (itemId: string) => `assistant-${itemId}`
+
 function toolExpanded(
   item: Extract<TranscriptItem, { kind: "tool" }>,
   expandedCallIds: ReadonlySet<string>,
@@ -73,16 +142,21 @@ function TranscriptRow({
   switch (item.kind) {
     case "user":
       return (
-        <box style={{ flexDirection: "column", marginBottom: 1 }}>
+        <box
+          border={["left"]}
+          borderColor="#8fbcff"
+          backgroundColor="#1f2335"
+          style={{ flexDirection: "column", marginBottom: 1, paddingX: 1 }}
+        >
           <text content="YOU" style={{ fg: "#8fbcff" }} />
           <text content={item.text} wrapMode="word" />
         </box>
       )
     case "assistant":
       return (
-        <box style={{ flexDirection: "column", marginBottom: 1 }}>
+        <box id={assistantRowId(item.id)} style={{ flexDirection: "column", marginBottom: 1 }}>
           <text content="ASSISTANT" style={{ fg: "#9ece6a" }} />
-          <text content={item.text} wrapMode="word" />
+          <markdown content={item.text} syntaxStyle={MARKDOWN_STYLE} conceal={true} />
         </box>
       )
     case "error":
@@ -95,27 +169,31 @@ function TranscriptRow({
     case "tool": {
       const label = item.status === "succeeded" ? "done" : item.status
       const color = item.status === "running" ? "#e0af68" : item.status === "succeeded" ? "#9ece6a" : "#f7768e"
-      const summary = item.summary === undefined ? "" : ` · ${item.summary}`
+      const args = oneLine(describeArgs(item.input))
+      // read_file's summary already leads with the path, so do not say it twice.
+      const preview = item.summary?.startsWith(args) === true ? "" : ` ${truncate(args, ARG_PREVIEW_CHARS)}`
+      const summary = item.summary === undefined ? "" : ` · ${truncate(oneLine(item.summary), 80)}`
       const focusMark = focused ? "▸ " : "  "
-      const lines = expanded ? (item.output === undefined ? 4 : 5) : 3
 
       return (
         <box
           focusable={item.status !== "running"}
           focused={focused}
-          style={{
-            border: true,
-            borderColor: focused ? "#8fbcff" : color,
-            flexDirection: "column",
-            height: lines,
-            marginBottom: 1,
-            paddingX: 1,
-          }}
+          style={{ flexDirection: "column", marginBottom: expanded ? 1 : 0 }}
         >
-          <text content={`${focusMark}${label.padEnd(8)} ${item.name}${summary}`} style={{ fg: color }} />
-          {expanded ? <text content={item.input} style={{ fg: "#8c94a3" }} wrapMode="word" /> : null}
+          <text
+            content={`${focusMark}${label.padEnd(8)} ${item.name}${preview}${summary}`}
+            style={{ fg: focused ? "#8fbcff" : color }}
+          />
+          {expanded ? (
+            <text content={truncate(item.input, EXPANDED_INPUT_CHARS)} style={{ fg: "#565f89" }} wrapMode="word" />
+          ) : null}
           {expanded && item.output !== undefined ? (
-            <text content={item.output} style={{ fg: "#8c94a3" }} wrapMode="word" />
+            <text
+              content={clipBlock(item.output, EXPANDED_OUTPUT_CHARS, EXPANDED_OUTPUT_LINES)}
+              style={{ fg: "#565f89" }}
+              wrapMode="word"
+            />
           ) : null}
         </box>
       )
@@ -127,6 +205,26 @@ export function HarnessView({ items, busy, usage, model, queued = [], onSubmit }
   const [draft, setDraft] = useState("")
   const [focus, setFocus] = useState<FocusTarget>("prompt")
   const [expandedCallIds, setExpandedCallIds] = useState<ReadonlySet<string>>(() => new Set())
+
+  // Dead air between model calls: the model is working and no tool is.
+  const thinking = busy && !items.some((item) => item.kind === "tool" && item.status === "running")
+
+  const scrollRef = useRef<ScrollBoxRenderable | null>(null)
+  const lastItem = items.at(-1)
+  const lastAssistantId = lastItem?.kind === "assistant" ? lastItem.id : undefined
+
+  // A finished answer should be read from its first line, not its last. Pin its top to the
+  // viewport top; a short answer still ends at the bottom because the scrollbox clamps.
+  useEffect(() => {
+    if (lastAssistantId === undefined) return
+    const timer = setTimeout(() => {
+      const scroll = scrollRef.current
+      const row = scroll?.findDescendantById(assistantRowId(lastAssistantId))
+      if (scroll === null || scroll === undefined || row === undefined) return
+      scroll.scrollTo(scroll.scrollTop + (row.y - scroll.y))
+    }, 50)
+    return () => clearTimeout(timer)
+  }, [lastAssistantId])
 
   const focusableToolIds = useMemo(
     () =>
@@ -184,16 +282,17 @@ export function HarnessView({ items, busy, usage, model, queued = [], onSubmit }
 
   return (
     <box style={{ flexDirection: "column", padding: 1 }}>
-      <text content={headerText(model, busy)} style={{ fg: "#8fbcff" }} />
+      <text content={headerText(model, busy)} style={{ fg: "#8fbcff", flexShrink: 0 }} />
 
       <scrollbox
+        ref={scrollRef}
         flexGrow={1}
         stickyScroll={true}
         stickyStart="bottom"
         contentOptions={{ paddingRight: 1 }}
         verticalScrollbarOptions={{ visible: true }}
       >
-        {items.length === 0 && queued.length === 0 ? (
+        {items.length === 0 && queued.length === 0 && !thinking ? (
           <text content="Messages and tool calls will appear here." style={{ fg: "#8c94a3" }} />
         ) : (
           <>
@@ -205,6 +304,7 @@ export function HarnessView({ items, busy, usage, model, queued = [], onSubmit }
                 expanded={item.kind === "tool" ? toolExpanded(item, expandedCallIds) : false}
               />
             ))}
+            {thinking ? <ThinkingIndicator /> : null}
             {queued.map((message) => (
               <box key={message.id} style={{ flexDirection: "column", marginBottom: 1 }}>
                 <text
@@ -218,7 +318,7 @@ export function HarnessView({ items, busy, usage, model, queued = [], onSubmit }
         )}
       </scrollbox>
 
-      <box title={busy ? "Running · Enter queues follow-up · Ctrl+S steers" : focus === "prompt" ? "Prompt" : "Prompt (Tab)"} style={{ border: true, height: 3 }}>
+      <box title={busy ? "Running · Enter queues follow-up · Ctrl+S steers" : focus === "prompt" ? "Prompt" : "Prompt (Tab)"} style={{ border: true, height: 3, flexShrink: 0 }}>
         <input
           value={draft}
           placeholder={busy ? "Type to queue or steer" : "Ask the harness"}
@@ -230,7 +330,7 @@ export function HarnessView({ items, busy, usage, model, queued = [], onSubmit }
 
       <text
         content={`input ${usage.inputTokens} · output ${usage.outputTokens} · $${usage.costUsd.toFixed(6)}`}
-        style={{ fg: "#8c94a3" }}
+        style={{ fg: "#8c94a3", flexShrink: 0 }}
       />
     </box>
   )

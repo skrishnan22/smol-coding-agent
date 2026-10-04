@@ -5,6 +5,23 @@ import { App, HarnessView, type TranscriptItem } from "../src/app.js"
 import { createInitialModelContext, createUserMessage } from "../src/model-context.js"
 import type { ModelInputItem, OpenAIClient, OpenAIResponse } from "../src/openai/types.js"
 
+// Layout and markdown content settle a few frames after the first render, so wait for a stable frame.
+const withoutSpinner = (frame: string) => frame.replace(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/g, "")
+
+async function frameOf(screen: Awaited<ReturnType<typeof testRender>>): Promise<string> {
+  let previous = ""
+  let stable = 0
+  for (let i = 0; i < 80 && stable < 10; i += 1) {
+    await screen.renderOnce()
+    await new Promise((resolve) => setTimeout(resolve, 25))
+    const current = screen.captureCharFrame()
+    // The spinner animates forever while busy; ignore it when deciding the frame has settled.
+    stable = withoutSpinner(current) === withoutSpinner(previous) ? stable + 1 : 0
+    previous = current
+  }
+  return previous
+}
+
 let renderer: Awaited<ReturnType<typeof testRender>>["renderer"] | undefined
 
 afterEach(() => {
@@ -84,7 +101,7 @@ test("a function_call runs read_file, continues, and shows the assistant reply",
   })
   await screen.flush()
 
-  const frame = screen.captureCharFrame()
+  const frame = (await frameOf(screen))
   expect(frame).toContain("YOU")
   expect(frame).toContain("Read package.json")
   expect(frame).toContain("done     read_file")
@@ -141,10 +158,10 @@ test("several read_file calls in one response each get a card, then the model co
   await screen.renderOnce()
   await screen.renderOnce()
 
-  const frame = screen.captureCharFrame()
+  const frame = (await frameOf(screen))
   expect(responses).toBe(2)
-  expect(frame).toContain("failed   read_file · file not found: a.txt")
-  expect(frame).toContain("failed   read_file · file not found: b.txt")
+  expect(frame).toContain("failed   read_file a.txt · file not found: a.txt")
+  expect(frame).toContain("failed   read_file b.txt · file not found: b.txt")
   expect(frame).toContain("Neither file exists.")
   expect(frame).not.toContain("ERROR")
 })
@@ -154,7 +171,7 @@ test("renders the empty harness shell", async () => {
   renderer = screen.renderer
 
   await screen.renderOnce()
-  const frame = screen.captureCharFrame()
+  const frame = (await frameOf(screen))
 
   expect(frame).toContain("AI harness")
   expect(frame).toContain("Ask the harness")
@@ -185,11 +202,12 @@ test("submitting a prompt calls OpenAI once and shows the assistant reply", asyn
   })
   await screen.flush()
 
-  let frame = screen.captureCharFrame()
+  let frame = (await frameOf(screen))
   expect(frame).toContain("YOU")
   expect(frame).toContain("Explain the loop")
   expect(frame).toContain("AI harness · running")
   expect(frame).toContain("Type to queue or steer")
+  expect(frame).toContain("thinking…")
   expect(calls).toEqual([[...createInitialModelContext(), createUserMessage("Explain the loop")]])
 
   const firstOutput = [
@@ -213,9 +231,10 @@ test("submitting a prompt calls OpenAI once and shows the assistant reply", asyn
   })
   await screen.flush()
 
-  frame = screen.captureCharFrame()
+  frame = (await frameOf(screen))
   expect(frame).toContain("ASSISTANT")
   expect(frame).toContain("Here is the explanation.")
+  expect(frame).not.toContain("thinking…")
   expect(frame).toContain("input 10 · output 5 · $0.000008")
   expect(frame).toContain("Ask the harness")
   expect(frame).not.toContain("AI harness · running")
@@ -300,7 +319,7 @@ test("a second prompt resends the accumulated model context", async () => {
     createUserMessage("What is my name?"),
   ])
 
-  const frame = screen.captureCharFrame()
+  const frame = (await frameOf(screen))
   expect(frame).toContain("My name is Ada")
   expect(frame).toContain("Your name is Ada.")
   expect(frame).toContain("What is my name?")
@@ -328,7 +347,7 @@ test("OpenAI failure shows a transcript error and clears busy state", async () =
   })
   await screen.flush()
 
-  expect(screen.captureCharFrame()).toContain("AI harness · running")
+  expect((await frameOf(screen))).toContain("AI harness · running")
 
   await act(async () => {
     pending.reject(new Error("OpenAI request failed (401): Invalid API key"))
@@ -336,7 +355,7 @@ test("OpenAI failure shows a transcript error and clears busy state", async () =
   })
   await screen.flush()
 
-  const frame = screen.captureCharFrame()
+  const frame = (await frameOf(screen))
   expect(frame).toContain("ERROR")
   expect(frame).toContain("OpenAI request failed (401): Invalid API key")
   expect(frame).toContain("Ask the harness")
@@ -365,7 +384,7 @@ test("completed tool cards collapse and expand with Enter", async () => {
   renderer = screen.renderer
 
   await screen.renderOnce()
-  let frame = screen.captureCharFrame()
+  let frame = (await frameOf(screen))
   expect(frame).toContain("done     read_file · fixtures/hello.txt · 31B")
   expect(frame).not.toContain('{"path":"fixtures/hello.txt"}')
 
@@ -378,7 +397,7 @@ test("completed tool cards collapse and expand with Enter", async () => {
   })
   await screen.flush()
 
-  frame = screen.captureCharFrame()
+  frame = (await frameOf(screen))
   expect(frame).toContain('{"path":"fixtures/hello.txt"}')
   expect(frame).toContain("hello from the harness")
   expect(frame).toContain("fixture")
@@ -420,12 +439,133 @@ test("renders assistant output, tool states, and real usage", async () => {
   // Sticky-bottom scrolling settles on the second frame.
   await screen.renderOnce()
   await screen.renderOnce()
-  const frame = screen.captureCharFrame()
+  const frame = (await frameOf(screen))
 
   expect(frame).toContain("ASSISTANT")
   expect(frame).toContain("I will inspect the file.")
   expect(frame).toContain("running  read_file")
   expect(frame).toContain('{"path":"package.json"}')
-  expect(frame).toContain("failed   read_file · File not found")
+  expect(frame).toContain("failed   read_file missing.txt · File not found")
   expect(frame).toContain("input 120 · output 30 · $0.000060")
+})
+
+test("assistant markdown renders formatted, with the code block intact and tool calls on one line", async () => {
+  const items = [
+    {
+      id: "1",
+      kind: "tool",
+      callId: "c1",
+      name: "read_file",
+      input: '{"path":"a.ts"}',
+      status: "succeeded",
+      summary: "a.ts · 10B",
+      output: "{}",
+    },
+    {
+      id: "2",
+      kind: "assistant",
+      text: "# Result\n\nUse **bold** and `code`.\n\n```ts\nconst answer = 42\n```\n\n- first\n- second",
+    },
+  ] satisfies readonly TranscriptItem[]
+
+  const screen = await testRender(
+    <HarnessView items={items} busy={false} usage={{ inputTokens: 1, outputTokens: 1, costUsd: 0 }} onSubmit={() => {}} />,
+    { width: 80, height: 24 },
+  )
+  renderer = screen.renderer
+
+  const frame = await frameOf(screen)
+  expect(frame).toContain("Result")
+  expect(frame).not.toContain("# Result")
+  expect(frame).toContain("Use bold and code.")
+  expect(frame).not.toContain("**bold**")
+  expect(frame).toContain("const answer = 42")
+  expect(frame).not.toContain("```")
+  expect(frame).toContain("done     read_file · a.ts · 10B")
+  expect(frame).not.toContain("┌─read_file")
+})
+
+test("a long answer opens at its first line, and the next turn still follows the bottom", async () => {
+  const long = `START of answer\n\n${Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join("\n\n")}\n\nEND of answer`
+  const replies = [long, "Second reply."]
+  const client: OpenAIClient = {
+    respond: async () => {
+      const text = replies.shift() ?? "unexpected"
+      return {
+        id: "resp",
+        status: "completed",
+        text,
+        output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text }] }],
+        usage: { inputTokens: 1, outputTokens: 1, estimatedCostUsd: 0 },
+      }
+    },
+  }
+  const screen = await testRender(<App client={client} />, { width: 60, height: 20 })
+  renderer = screen.renderer
+
+  const ask = async (text: string) => {
+    await act(async () => {
+      await screen.mockInput.typeText(text)
+    })
+    await screen.flush()
+    await act(async () => {
+      screen.mockInput.pressEnter()
+      await new Promise((resolve) => setTimeout(resolve, 150))
+    })
+    await screen.flush()
+  }
+
+  await ask("first question")
+  let frame = await frameOf(screen)
+  expect(frame).toContain("START of answer")
+  expect(frame).not.toContain("END of answer")
+  expect(frame).toContain("AI harness")
+  expect(frame).toContain("input 1 · output 1")
+
+  await ask("second question")
+  frame = await frameOf(screen)
+  expect(frame).toContain("Second reply.")
+})
+
+test("tool lines show a trimmed command, expanded output is clipped, and user messages carry an accent bar", async () => {
+  const longCommand = `echo ${"x".repeat(200)}`
+  const longOutput = Array.from({ length: 40 }, (_, i) => `output line ${i + 1}`).join("\n")
+  const items = [
+    { id: "1", kind: "user", text: "run it" },
+    {
+      id: "2",
+      kind: "tool",
+      callId: "c1",
+      name: "bash",
+      input: JSON.stringify({ command: longCommand }),
+      status: "succeeded",
+      summary: "exit 0 · 12ms",
+      output: longOutput,
+    },
+  ] satisfies readonly TranscriptItem[]
+
+  const screen = await testRender(
+    <HarnessView items={items} busy={false} usage={{ inputTokens: 1, outputTokens: 1, costUsd: 0 }} onSubmit={() => {}} />,
+    { width: 100, height: 40 },
+  )
+  renderer = screen.renderer
+
+  let frame = await frameOf(screen)
+  expect(frame).toContain("done     bash echo xxx")
+  expect(frame).toContain("… · exit 0 · 12ms")
+  expect(frame).not.toContain("x".repeat(80))
+  expect(frame).not.toContain("output line 1")
+  expect(frame).toContain("│ YOU")
+
+  act(() => {
+    screen.mockInput.pressTab()
+  })
+  act(() => {
+    screen.mockInput.pressEnter()
+  })
+  frame = await frameOf(screen)
+  expect(frame).toContain("output line 1")
+  expect(frame).toContain("output line 12")
+  expect(frame).not.toContain("output line 13")
+  expect(frame).toContain("more chars")
 })

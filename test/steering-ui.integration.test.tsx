@@ -4,6 +4,23 @@ import { act } from "react"
 import { App } from "../src/app.js"
 import type { ModelInputItem, OpenAIClient, OpenAIResponse } from "../src/openai/types.js"
 
+// Layout and markdown content settle a few frames after the first render, so wait for a stable frame.
+const withoutSpinner = (frame: string) => frame.replace(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/g, "")
+
+async function frameOf(screen: Awaited<ReturnType<typeof testRender>>): Promise<string> {
+  let previous = ""
+  let stable = 0
+  for (let i = 0; i < 80 && stable < 10; i += 1) {
+    await screen.renderOnce()
+    await new Promise((resolve) => setTimeout(resolve, 25))
+    const current = screen.captureCharFrame()
+    // The spinner animates forever while busy; ignore it when deciding the frame has settled.
+    stable = withoutSpinner(current) === withoutSpinner(previous) ? stable + 1 : 0
+    previous = current
+  }
+  return previous
+}
+
 let renderer: Awaited<ReturnType<typeof testRender>>["renderer"] | undefined
 
 afterEach(() => {
@@ -88,7 +105,7 @@ test("Enter while a turn runs queues a follow-up that the model sees once it wou
   act(() => screen.mockInput.pressEnter())
   await settle()
 
-  let frame = screen.captureCharFrame()
+  let frame = (await frameOf(screen))
   expect(frame).toContain("QUEUED · follow-up")
   expect(frame).toContain("then be brief")
   expect(calls).toHaveLength(1) // not sent yet
@@ -99,14 +116,14 @@ test("Enter while a turn runs queues a follow-up that the model sees once it wou
 
   expect(calls).toHaveLength(2)
   expect(userTexts(calls[1]!)).toEqual(["Explain the loop", "then be brief"])
-  frame = screen.captureCharFrame()
+  frame = (await frameOf(screen))
   expect(frame).not.toContain("QUEUED")
   expect(frame).toContain("Here is the explanation.")
 
   pending[1]!.resolve(textResponse("Short version."))
   await settle()
 
-  frame = screen.captureCharFrame()
+  frame = (await frameOf(screen))
   expect(frame).toContain("Short version.")
   expect(frame).toContain("then be brief") // now a normal YOU row
   expect(frame).toContain("AI harness")
@@ -125,7 +142,7 @@ test("Ctrl+S queues steering that goes in right after the tool output, before th
   act(() => screen.mockInput.pressKey("s", { ctrl: true }))
   await settle()
 
-  let frame = screen.captureCharFrame()
+  let frame = (await frameOf(screen))
   expect(frame).toContain("QUEUED · steering")
   expect(frame).toContain("only summarize it")
 
@@ -138,13 +155,13 @@ test("Ctrl+S queues steering that goes in right after the tool output, before th
   expect(kinds).toEqual(["developer", "user", "function_call", "function_call_output", "user"])
   expect(userTexts(calls[1]!)).toEqual(["Read the fixture", "only summarize it"])
 
-  frame = screen.captureCharFrame()
+  frame = (await frameOf(screen))
   expect(frame).not.toContain("QUEUED")
   expect(frame).toContain("read_file")
 
   pending[1]!.resolve(textResponse("A summary."))
   await settle()
-  expect(screen.captureCharFrame()).toContain("A summary.")
+  expect((await frameOf(screen))).toContain("A summary.")
 })
 
 test("when idle, Enter and Ctrl+S both just start a turn", async () => {
@@ -157,7 +174,7 @@ test("when idle, Enter and Ctrl+S both just start a turn", async () => {
 
   expect(calls).toHaveLength(1)
   expect(userTexts(calls[0]!)).toEqual(["first"])
-  expect(screen.captureCharFrame()).not.toContain("QUEUED")
+  expect((await frameOf(screen))).not.toContain("QUEUED")
 
   pending[0]!.resolve(textResponse("done"))
   await settle()
@@ -174,7 +191,7 @@ test("a queued message is not lost when the turn fails: it becomes the next prom
   await type("queued one")
   act(() => screen.mockInput.pressEnter())
   await settle()
-  expect(screen.captureCharFrame()).toContain("QUEUED · follow-up")
+  expect((await frameOf(screen))).toContain("QUEUED · follow-up")
 
   // The call fails, so the loop never reaches a drain point.
   pending[0]!.reject(new Error("provider is down"))
@@ -182,11 +199,11 @@ test("a queued message is not lost when the turn fails: it becomes the next prom
 
   expect(calls).toHaveLength(2)
   expect(userTexts(calls[1]!)).toEqual(["first", "queued one"])
-  const frame = screen.captureCharFrame()
+  const frame = (await frameOf(screen))
   expect(frame).toContain("provider is down")
   expect(frame).not.toContain("QUEUED")
 
   pending[1]!.resolve(textResponse("Recovered."))
   await settle()
-  expect(screen.captureCharFrame()).toContain("Recovered.")
+  expect((await frameOf(screen))).toContain("Recovered.")
 })
