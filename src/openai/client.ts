@@ -12,6 +12,8 @@ import { BASH_TOOL, READ_FILE_TOOL } from "./tools.js"
 const RESPONSES_URL = "https://api.openai.com/v1/responses"
 
 export const OPENAI_MODEL = "gpt-5.6-luna"
+/** Reasoning is off: the model answers directly and no hidden reasoning tokens are generated. */
+export const OPENAI_REASONING_EFFORT = "none"
 /**
  * Ceiling on tokens the model may generate per response. With reasoning off, all of it is
  * available for the answer and tool arguments. OpenCode defaults to the same 32_000.
@@ -59,7 +61,7 @@ export function createOpenAIClient(options: OpenAIClientOptions): OpenAIClient {
         model: OPENAI_MODEL,
         input,
         tools: [READ_FILE_TOOL, BASH_TOOL],
-        reasoning: { effort: "none" },
+        reasoning: { effort: OPENAI_REASONING_EFFORT },
         store: false,
         parallel_tool_calls: true,
         max_output_tokens: MAX_OUTPUT_TOKENS,

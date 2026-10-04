@@ -4,7 +4,7 @@ import { useCallback, useMemo, useRef, useState } from "react"
 import { runTurn, type QueuedKind, type TurnEvent } from "./agent-loop.js"
 import { createJsonlSink } from "./logging/jsonl.js"
 import { createInitialModelContext } from "./model-context.js"
-import { createOpenAIClient } from "./openai/client.js"
+import { createOpenAIClient, OPENAI_MODEL, OPENAI_REASONING_EFFORT } from "./openai/client.js"
 import { SANDBOX_EXEC } from "./sandbox.js"
 import type { ModelInputItem, OpenAIClient, OpenAIWideEvent } from "./openai/types.js"
 
@@ -26,6 +26,9 @@ export type TranscriptItem =
 /** A message typed while a turn runs. It leaves this list when the loop injects it. */
 export type QueuedMessage = { id: string; kind: QueuedKind; text: string }
 
+/** What the client is configured to use. Shown in the header so a session says what it ran on. */
+export type ModelInfo = { name: string; effort: string }
+
 export type Usage = {
   inputTokens: number
   outputTokens: number
@@ -38,9 +41,18 @@ type HarnessViewProps = {
   items: readonly TranscriptItem[]
   busy: boolean
   usage: Usage
+  model?: ModelInfo
   queued?: readonly QueuedMessage[]
   /** Enter sends a follow_up; Ctrl+S sends steering. When idle both just start a turn. */
   onSubmit: (prompt: string, kind: QueuedKind) => void
+}
+
+/** "AI harness · gpt-5.6-luna · effort none · running", with the parts that apply. */
+function headerText(model: ModelInfo | undefined, busy: boolean): string {
+  const parts = ["AI harness"]
+  if (model !== undefined) parts.push(model.name, `effort ${model.effort}`)
+  if (busy) parts.push("running")
+  return parts.join(" · ")
 }
 
 function toolExpanded(
@@ -113,7 +125,7 @@ function TranscriptRow({
   }
 }
 
-export function HarnessView({ items, busy, usage, queued = [], onSubmit }: HarnessViewProps) {
+export function HarnessView({ items, busy, usage, model, queued = [], onSubmit }: HarnessViewProps) {
   const [draft, setDraft] = useState("")
   const [focus, setFocus] = useState<FocusTarget>("prompt")
   const [expandedCallIds, setExpandedCallIds] = useState<ReadonlySet<string>>(() => new Set())
@@ -174,7 +186,7 @@ export function HarnessView({ items, busy, usage, queued = [], onSubmit }: Harne
 
   return (
     <box style={{ flexDirection: "column", padding: 1 }}>
-      <text content={busy ? "AI harness · running" : "AI harness"} style={{ fg: "#8fbcff" }} />
+      <text content={headerText(model, busy)} style={{ fg: "#8fbcff" }} />
 
       <scrollbox
         flexGrow={1}
@@ -230,9 +242,10 @@ const EMPTY_USAGE: Usage = { inputTokens: 0, outputTokens: 0, costUsd: 0 }
 
 type AppProps = {
   client: OpenAIClient
+  model?: ModelInfo
 }
 
-export function App({ client }: AppProps) {
+export function App({ client, model }: AppProps) {
   const [items, setItems] = useState<TranscriptItem[]>([])
   const [queued, setQueued] = useState<QueuedMessage[]>([])
   const [busy, setBusy] = useState(false)
@@ -393,7 +406,7 @@ export function App({ client }: AppProps) {
     [startTurn],
   )
 
-  return <HarnessView items={items} busy={busy} usage={usage} queued={queued} onSubmit={onSubmit} />
+  return <HarnessView items={items} busy={busy} usage={usage} model={model} queued={queued} onSubmit={onSubmit} />
 }
 
 if (import.meta.main) {
@@ -416,5 +429,5 @@ if (import.meta.main) {
   })
 
   const renderer = await createCliRenderer({ exitOnCtrlC: true })
-  createRoot(renderer).render(<App client={client} />)
+  createRoot(renderer).render(<App client={client} model={{ name: OPENAI_MODEL, effort: OPENAI_REASONING_EFFORT }} />)
 }
