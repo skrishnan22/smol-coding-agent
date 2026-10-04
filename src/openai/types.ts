@@ -25,6 +25,8 @@ export type OpenAIUsage = {
 export type OpenAIResponse = {
   id: string
   status: ResponseStatus
+  /** Why a response with status "incomplete" stopped early, e.g. "max_output_tokens". */
+  incompleteReason?: string
   text: string
   output: readonly unknown[]
   usage: OpenAIUsage

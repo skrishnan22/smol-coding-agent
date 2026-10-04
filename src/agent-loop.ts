@@ -5,7 +5,7 @@ import {
   createFunctionCallOutput,
 } from "./model-context.js"
 import { listFunctionCalls, type ParsedFunctionCall } from "./openai/tools.js"
-import type { ModelInputItem, OpenAIClient } from "./openai/types.js"
+import type { ModelInputItem, OpenAIClient, OpenAIResponse } from "./openai/types.js"
 import { runBash } from "./bash.js"
 import { readFile } from "./read-file.js"
 import type { ToolResult } from "./tool-result.js"
@@ -168,6 +168,14 @@ function appendQueuedMessages(
   return appendUserMessages(context, texts) // the pure part
 }
 
+function describeUnfinishedResponse(response: OpenAIResponse): string {
+  if (response.status === "incomplete") {
+    const reason = response.incompleteReason ?? "unknown reason"
+    return `The response was cut off before it finished (${reason}). Ask for less in one go, or raise the output limit.`
+  }
+  return `The response did not complete (status: ${response.status}).`
+}
+
 /**
  * One user turn: call the model, run any tool calls it asks for, continue until final text.
  * Emits ordered events for the UI; returns the updated model context.
@@ -212,6 +220,13 @@ export async function runTurn({
       outputTokens: result.usage.outputTokens,
       estimatedCostUsd: result.usage.estimatedCostUsd,
     })
+
+    // Anything but "completed" means the output may be cut off, including a half-written function_call.
+    // Do not run it or add it to the context: a call with no valid arguments cannot be answered.
+    if (result.status !== "completed") {
+      onEvent({ type: "turn_failed", message: describeUnfinishedResponse(result) })
+      return { context }
+    }
 
     // The provider needs to see its own calls before it sees their outputs.
     context = appendResponseOutput(context, result.output)

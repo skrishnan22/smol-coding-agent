@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { createUserMessage } from "../src/model-context.js"
 import { BASH_TOOL, READ_FILE_TOOL } from "../src/openai/tools.js"
-import { createOpenAIClient } from "../src/openai/client.js"
+import { createOpenAIClient, MAX_OUTPUT_TOKENS } from "../src/openai/client.js"
 import type { OpenAIFetch, OpenAIWideEvent } from "../src/openai/types.js"
 
 const ignoreLog = async (_event: OpenAIWideEvent) => {}
@@ -57,7 +57,7 @@ test("sends one stateless Responses API request and parses its result", async ()
     reasoning: { effort: "none" },
     store: false,
     parallel_tool_calls: true,
-    max_output_tokens: 800,
+    max_output_tokens: MAX_OUTPUT_TOKENS,
   })
   expect(result).toEqual({
     id: "resp_123",
@@ -94,7 +94,7 @@ test("sends one stateless Responses API request and parses its result", async ()
       reasoning: { effort: "none" },
       store: false,
       parallel_tool_calls: true,
-      max_output_tokens: 800,
+      max_output_tokens: MAX_OUTPUT_TOKENS,
     },
     usage: { inputTokens: 120, outputTokens: 30, estimatedCostUsd: 0.00006 },
     raw_response: {
