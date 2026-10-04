@@ -5,7 +5,7 @@ import { createOpenAIClient } from "../src/openai/client.js"
 
 type Item = Record<string, unknown>
 
-// What a reasoning model returns with store: false and include: reasoning.encrypted_content.
+// A reasoning item as returned with encrypted content.
 const reasoning = { id: "rs_1", type: "reasoning", summary: [], encrypted_content: "gAAAA-opaque-blob" }
 const readCall = { type: "function_call", call_id: "call_1", name: "read_file", arguments: '{"path":"fixtures/hello.txt"}' }
 
@@ -53,7 +53,7 @@ test("a reasoning item comes back unchanged and ahead of its function_call and t
   const input = requests[1]!.input as Item[]
   const shape = input.map((item) => (item.type === "message" ? String(item.role) : String(item.type)))
   expect(shape).toEqual(["developer", "user", "reasoning", "function_call", "function_call_output"])
-  expect(input[2]).toEqual(reasoning) // byte-for-byte, including the encrypted blob
+  expect(input[2]).toEqual(reasoning)
 })
 
 test("reasoning items from an earlier answer stay in the context for the next prompt", async () => {

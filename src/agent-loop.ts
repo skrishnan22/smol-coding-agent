@@ -12,11 +12,7 @@ import type { ToolResult } from "./tool-result.js"
 
 export const MAX_PROVIDER_CALLS = 8
 
-/**
- * Messages typed while a turn runs wait in one of two queues:
- * - steering: injected at the next drain point, before the next model call ("change course")
- * - follow_up: injected only when the model would otherwise stop ("do this next")
- */
+/** steering goes in before the next model call; follow_up goes in when the model would stop. */
 export type QueuedKind = "steering" | "follow_up"
 
 export type TurnEvent =
@@ -31,7 +27,6 @@ export type TurnEvent =
   | { type: "tool_finished"; callId: string; output: string; summary: string }
   | { type: "tool_failed"; callId: string; error: string }
   | { type: "assistant_finished"; text: string }
-  /** A message the user typed mid-turn has just been added to the model context. */
   | { type: "message_injected"; kind: QueuedKind; text: string }
   | { type: "turn_failed"; message: string }
 
@@ -42,13 +37,11 @@ export type RunTurnOptions = {
   rootDir: string
   onEvent: (event: TurnEvent) => void
   maxProviderCalls?: number
-  /** Called at a drain point. Returns the queued steering messages and empties the queue. */
+  // Each take* returns the queued messages and empties the queue.
   takeSteering?: () => string[]
-  /** Called when the model would otherwise stop. Returns the queued follow-ups and empties the queue. */
   takeFollowUp?: () => string[]
-  /** Injectable for tests; defaults to the local read_file tool. */
+  // Overridable in tests.
   executeReadFile?: (rawArguments: string, rootDir: string) => Promise<ToolResult>
-  /** Injectable for tests; defaults to the sandboxed bash tool. */
   executeBash?: (rawArguments: string, rootDir: string) => Promise<ToolResult>
 }
 
@@ -60,10 +53,7 @@ type ToolExecutor = (rawArguments: string, rootDir: string) => Promise<ToolResul
 
 type Tool = {
   execute: ToolExecutor
-  /**
-   * Whether calls to this tool may run alongside other calls. read_file only reads, so it can.
-   * bash can touch anything, and nothing tells us which files, so it cannot.
-   */
+  /** Can run alongside other calls. bash cannot: we can't tell which files it touches. */
   parallelSafe: boolean
 }
 
@@ -86,7 +76,7 @@ async function executeTool(
     const result = await tool.execute(call.arguments, rootDir)
     return result
   } catch (cause) {
-    // One crashing tool must not reject Promise.all and lose its siblings' results.
+    // A throw must not reject Promise.all and lose the other results.
     const message = cause instanceof Error ? cause.message : String(cause)
     return failure(`tool crashed: ${message}`)
   }
@@ -96,7 +86,6 @@ function emitToolStarted(call: ParsedFunctionCall, onEvent: (event: TurnEvent) =
   onEvent({ type: "tool_started", callId: call.callId, name: call.name, rawArguments: call.arguments })
 }
 
-/** Run one call and report how it ended as soon as it does. */
 async function runCall(
   call: ParsedFunctionCall,
   tools: Record<string, Tool>,
@@ -114,12 +103,7 @@ async function runCall(
   return toolResult
 }
 
-/**
- * Run every call from one response and return one result per call, in call order.
- *
- * The calls run together only if there are several and every one is to a parallel-safe tool.
- * Otherwise they run one by one. Either way, results[i] belongs to calls[i].
- */
+/** One result per call, in call order. Runs together only if every call is parallel-safe. */
 async function runToolCalls(
   calls: ParsedFunctionCall[],
   tools: Record<string, Tool>,
@@ -129,15 +113,13 @@ async function runToolCalls(
   const runTogether = calls.length > 1 && calls.every((call) => tools[call.name]?.parallelSafe === true)
 
   if (runTogether) {
-    // Every card shows as running at once. Promise.all returns results by input position,
-    // not by finish time, so a slow first call does not reorder them.
+    // Promise.all keeps input order, whatever finishes first.
     for (const call of calls) emitToolStarted(call, onEvent)
     const running = calls.map((call) => runCall(call, tools, rootDir, onEvent))
     const results = await Promise.all(running)
     return results
   }
 
-  // A card only shows as running when its turn comes.
   const results: ToolResult[] = []
   for (const call of calls) {
     emitToolStarted(call, onEvent)
@@ -147,7 +129,6 @@ async function runToolCalls(
   return results
 }
 
-/** Answer each call with its output, in call order. call_id is what links an output to its call. */
 function appendToolOutputs(
   context: readonly ModelInputItem[],
   calls: readonly ParsedFunctionCall[],
@@ -157,15 +138,15 @@ function appendToolOutputs(
   return [...context, ...outputs]
 }
 
-/** Drain-all: every queued message becomes its own user message, in the order it was typed. */
+/** Drain-all: each queued message becomes its own user message, in typed order. */
 function appendQueuedMessages(
   context: readonly ModelInputItem[],
   kind: QueuedKind,
   texts: readonly string[],
   onEvent: (event: TurnEvent) => void,
 ): ModelInputItem[] {
-  texts.forEach((text) => onEvent({ type: "message_injected", kind, text })) // the side effect
-  return appendUserMessages(context, texts) // the pure part
+  texts.forEach((text) => onEvent({ type: "message_injected", kind, text }))
+  return appendUserMessages(context, texts)
 }
 
 function describeUnfinishedResponse(response: OpenAIResponse): string {
@@ -176,12 +157,7 @@ function describeUnfinishedResponse(response: OpenAIResponse): string {
   return `The response did not complete (status: ${response.status}).`
 }
 
-/**
- * One user turn: call the model, run any tool calls it asks for, continue until final text.
- * Emits ordered events for the UI; returns the updated model context.
- * Several calls in one response are scheduled by `runToolCalls`; their outputs always go
- * back to the model in call order, not completion order.
- */
+/** One user turn: model, then tools, repeated until the model answers and nothing is queued. */
 export async function runTurn({
   prompt,
   context: initialContext,
@@ -221,14 +197,13 @@ export async function runTurn({
       estimatedCostUsd: result.usage.estimatedCostUsd,
     })
 
-    // Anything but "completed" means the output may be cut off, including a half-written function_call.
-    // Do not run it or add it to the context: a call with no valid arguments cannot be answered.
+    // Cut-off output can hold a half-written function_call; don't run it or keep it.
     if (result.status !== "completed") {
       onEvent({ type: "turn_failed", message: describeUnfinishedResponse(result) })
       return { context }
     }
 
-    // The provider needs to see its own calls before it sees their outputs.
+    // The provider must see its calls before their outputs.
     context = appendResponseOutput(context, result.output)
 
     const calls = listFunctionCalls(result.output)
@@ -236,21 +211,21 @@ export async function runTurn({
       const results = await runToolCalls(calls, tools, rootDir, onEvent)
       context = appendToolOutputs(context, calls, results)
 
-      // Drain point 1: every call now has its output, so a user message cannot split a call from its answer.
+      // Drain point: every call has its output, so a user message cannot split them.
       context = appendQueuedMessages(context, "steering", takeSteering(), onEvent)
       continue
     }
 
     onEvent({ type: "assistant_finished", text: result.text })
 
-    // Drain point 2: the model would stop here. Steering typed during the last call still applies.
+    // Drain point: the model would stop here.
     const steering = takeSteering()
     if (steering.length > 0) {
       context = appendQueuedMessages(context, "steering", steering, onEvent)
       continue
     }
 
-    // A follow-up starts new work, so it gets a fresh provider-call budget.
+    // A follow-up is new work: fresh call budget.
     const followUps = takeFollowUp()
     if (followUps.length > 0) {
       context = appendQueuedMessages(context, "follow_up", followUps, onEvent)

@@ -1,7 +1,6 @@
 import { z } from "zod"
 import type { OpenAITool } from "./types.js"
 
-/** Strict Responses API tool schema for the one local file reader. */
 export const READ_FILE_TOOL = {
   type: "function",
   name: "read_file",
@@ -20,10 +19,7 @@ export const READ_FILE_TOOL = {
   strict: true,
 } satisfies OpenAITool
 
-/**
- * Strict Responses API tool schema for the sandboxed shell. The schema is as small as
- * read_file's; the description is what teaches the model the sandbox rules.
- */
+// Same shape as read_file; the description is what teaches the model the sandbox rules.
 export const BASH_TOOL = {
   type: "function",
   name: "bash",
@@ -57,11 +53,9 @@ const functionCallSchema = z.object({
 export type ParsedFunctionCall = {
   callId: string
   name: string
-  /** Raw JSON arguments string from the provider. */
   arguments: string
 }
 
-/** Collect function_call items from a Responses `output` array. */
 export function listFunctionCalls(output: readonly unknown[]): ParsedFunctionCall[] {
   const calls: ParsedFunctionCall[] = []
 

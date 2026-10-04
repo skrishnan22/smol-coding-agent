@@ -28,7 +28,6 @@ export function appendUserMessage(
   return [...context, createUserMessage(content)]
 }
 
-/** Several user messages at once, in order. Does not change `context`. */
 export function appendUserMessages(
   context: readonly ModelInputItem[],
   contents: readonly string[],
@@ -49,7 +48,6 @@ export type FunctionCallOutputItem = {
   output: string
 }
 
-/** Build the Responses item that correlates a tool result to a prior function_call. */
 export function createFunctionCallOutput(callId: string, output: string): FunctionCallOutputItem {
   return {
     type: "function_call_output",

@@ -25,31 +25,26 @@ export type OpenAIUsage = {
 export type OpenAIResponse = {
   id: string
   status: ResponseStatus
-  /** Why a response with status "incomplete" stopped early, e.g. "max_output_tokens". */
+  /** Set when status is "incomplete", e.g. "max_output_tokens". */
   incompleteReason?: string
   text: string
   output: readonly unknown[]
   usage: OpenAIUsage
 }
 
-/** Locally constructed user turn. Sent as part of the Responses `input` array. */
 export type UserInputMessage = {
   type: "message"
   role: "user"
   content: string
 }
 
-/** Locally constructed developer/system guidance for the harness. */
 export type DeveloperInputMessage = {
   type: "message"
   role: "developer"
   content: string
 }
 
-/**
- * Ordered model context for `store: false` turns.
- * Local messages plus provider `output[]` items resent exactly as returned.
- */
+/** Context for store:false turns: local messages plus provider output items, resent as returned. */
 export type ModelInputItem = UserInputMessage | DeveloperInputMessage | Record<string, unknown>
 
 export type OpenAITool = {
