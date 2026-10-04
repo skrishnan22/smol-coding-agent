@@ -28,6 +28,14 @@ export function appendUserMessage(
   return [...context, createUserMessage(content)]
 }
 
+/** Several user messages at once, in order. Does not change `context`. */
+export function appendUserMessages(
+  context: readonly ModelInputItem[],
+  contents: readonly string[],
+): ModelInputItem[] {
+  return [...context, ...contents.map(createUserMessage)]
+}
+
 export function appendResponseOutput(
   context: readonly ModelInputItem[],
   output: readonly unknown[],

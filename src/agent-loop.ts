@@ -1,7 +1,8 @@
 import {
-  appendFunctionCallOutput,
   appendResponseOutput,
   appendUserMessage,
+  appendUserMessages,
+  createFunctionCallOutput,
 } from "./model-context.js"
 import { listFunctionCalls, type ParsedFunctionCall } from "./openai/tools.js"
 import type { ModelInputItem, OpenAIClient } from "./openai/types.js"
@@ -148,30 +149,23 @@ async function runToolCalls(
 
 /** Answer each call with its output, in call order. call_id is what links an output to its call. */
 function appendToolOutputs(
-  context: ModelInputItem[],
-  calls: ParsedFunctionCall[],
-  results: ToolResult[],
+  context: readonly ModelInputItem[],
+  calls: readonly ParsedFunctionCall[],
+  results: readonly ToolResult[],
 ): ModelInputItem[] {
-  let next = context
-  calls.forEach((call, index) => {
-    next = appendFunctionCallOutput(next, call.callId, results[index]!.output)
-  })
-  return next
+  const outputs = calls.map((call, index) => createFunctionCallOutput(call.callId, results[index]!.output))
+  return [...context, ...outputs]
 }
 
 /** Drain-all: every queued message becomes its own user message, in the order it was typed. */
 function appendQueuedMessages(
-  context: ModelInputItem[],
+  context: readonly ModelInputItem[],
   kind: QueuedKind,
-  texts: string[],
+  texts: readonly string[],
   onEvent: (event: TurnEvent) => void,
 ): ModelInputItem[] {
-  let next = context
-  for (const text of texts) {
-    next = appendUserMessage(next, text)
-    onEvent({ type: "message_injected", kind, text })
-  }
-  return next
+  texts.forEach((text) => onEvent({ type: "message_injected", kind, text })) // the side effect
+  return appendUserMessages(context, texts) // the pure part
 }
 
 /**
