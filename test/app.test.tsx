@@ -103,33 +103,30 @@ test("a function_call runs read_file, continues, and shows the assistant reply",
 })
 
 
-test("multiple function_calls fail the turn without a tool card", async () => {
+test("several read_file calls in one response each get a card, then the model continues", async () => {
   const output = [
-    {
-      type: "function_call",
-      call_id: "call_1",
-      name: "read_file",
-      arguments: '{"path":"a.txt"}',
-    },
-    {
-      type: "function_call",
-      call_id: "call_2",
-      name: "read_file",
-      arguments: '{"path":"b.txt"}',
-    },
+    { type: "function_call", call_id: "call_1", name: "read_file", arguments: '{"path":"a.txt"}' },
+    { type: "function_call", call_id: "call_2", name: "read_file", arguments: '{"path":"b.txt"}' },
   ]
 
+  let responses = 0
   const client: OpenAIClient = {
-    respond: async () => ({
-      id: "resp_multi",
-      status: "completed",
-      text: "",
-      output,
-      usage: { inputTokens: 9, outputTokens: 6, estimatedCostUsd: 0.000009 },
-    }),
+    respond: async () => {
+      responses += 1
+      return {
+        id: `resp_${responses}`,
+        status: "completed",
+        text: responses === 1 ? "" : "Neither file exists.",
+        output:
+          responses === 1
+            ? output
+            : [{ type: "message", content: [{ type: "output_text", text: "Neither file exists." }] }],
+        usage: { inputTokens: 9, outputTokens: 6, estimatedCostUsd: 0.000009 },
+      }
+    },
   }
 
-  const screen = await testRender(<App client={client} />, { width: 80, height: 24 })
+  const screen = await testRender(<App client={client} />, { width: 80, height: 40 })
   renderer = screen.renderer
 
   await act(async () => {
@@ -138,15 +135,18 @@ test("multiple function_calls fail the turn without a tool card", async () => {
   await screen.flush()
   await act(async () => {
     screen.mockInput.pressEnter()
-    await Promise.resolve()
+    await new Promise((resolve) => setTimeout(resolve, 50))
   })
   await screen.flush()
+  await screen.renderOnce()
+  await screen.renderOnce()
 
   const frame = screen.captureCharFrame()
-  expect(frame).toContain("ERROR")
-  expect(frame).toContain("Unsupported response: 2 function calls in one turn")
-  expect(frame).not.toContain("running  read_file")
-  expect(frame).toContain("Ask the harness")
+  expect(responses).toBe(2)
+  expect(frame).toContain("failed   read_file · file not found: a.txt")
+  expect(frame).toContain("failed   read_file · file not found: b.txt")
+  expect(frame).toContain("Neither file exists.")
+  expect(frame).not.toContain("ERROR")
 })
 
 test("renders the empty harness shell", async () => {

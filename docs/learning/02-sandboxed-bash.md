@@ -4,6 +4,8 @@ Date: 2026-10-03
 
 Spec: `docs/superpowers/specs/2026-10-03-milestone-two-sandboxed-bash-design.md`
 
+Visual explainer for the OS concepts (kernel, processes, pipes, Seatbelt): `docs/learning/02-sandbox-under-the-hood.html`. Open it in a browser.
+
 ## What this milestone does
 
 The model now has two tools: `read_file` (kept for comparison) and `bash`. `bash` runs one command in a fresh `/bin/bash -c` wrapped by macOS Seatbelt (`sandbox-exec`). The boundary is the kernel, not a string check on the command.
