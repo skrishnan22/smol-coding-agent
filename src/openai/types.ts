@@ -69,7 +69,8 @@ export type OpenAIRequestBody = {
   model: string
   input: readonly ModelInputItem[]
   tools: readonly OpenAITool[]
-  reasoning: { effort: "none" }
+  reasoning: { effort: string }
+  include: readonly string[]
   store: false
   parallel_tool_calls: true
   max_output_tokens: number

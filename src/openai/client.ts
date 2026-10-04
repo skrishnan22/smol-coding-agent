@@ -12,11 +12,19 @@ import { BASH_TOOL, READ_FILE_TOOL } from "./tools.js"
 const RESPONSES_URL = "https://api.openai.com/v1/responses"
 
 export const OPENAI_MODEL = "gpt-5.6-luna"
-/** Reasoning is off: the model answers directly and no hidden reasoning tokens are generated. */
-export const OPENAI_REASONING_EFFORT = "none"
 /**
- * Ceiling on tokens the model may generate per response. With reasoning off, all of it is
- * available for the answer and tool arguments. OpenCode defaults to the same 32_000.
+ * How much the model thinks before answering. Reasoning tokens are billed as output tokens
+ * and count against MAX_OUTPUT_TOKENS.
+ */
+export const OPENAI_REASONING_EFFORT = "low"
+/**
+ * We run with store: false, so the provider keeps nothing between requests. A reasoning model
+ * returns "reasoning" items that must be resent with the next request, and the encrypted
+ * content is the only form that can be replayed statelessly. OpenCode does the same.
+ */
+export const OPENAI_INCLUDE = ["reasoning.encrypted_content"] as const
+/**
+ * Ceiling on tokens the model may generate per response, reasoning included. OpenCode defaults to the same 32_000.
  * You only pay for what is generated; a lower cap would just cut long answers and file writes short.
  */
 export const MAX_OUTPUT_TOKENS = 32_000
@@ -62,6 +70,7 @@ export function createOpenAIClient(options: OpenAIClientOptions): OpenAIClient {
         input,
         tools: [READ_FILE_TOOL, BASH_TOOL],
         reasoning: { effort: OPENAI_REASONING_EFFORT },
+        include: OPENAI_INCLUDE,
         store: false,
         parallel_tool_calls: true,
         max_output_tokens: MAX_OUTPUT_TOKENS,
