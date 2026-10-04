@@ -1,7 +1,8 @@
 import {
-  appendFunctionCallOutput,
   appendResponseOutput,
   appendUserMessage,
+  appendUserMessages,
+  createFunctionCallOutput,
 } from "./model-context.js"
 import { listFunctionCalls, type ParsedFunctionCall } from "./openai/tools.js"
 import type { ModelInputItem, OpenAIClient } from "./openai/types.js"
@@ -10,6 +11,13 @@ import { readFile } from "./read-file.js"
 import type { ToolResult } from "./tool-result.js"
 
 export const MAX_PROVIDER_CALLS = 8
+
+/**
+ * Messages typed while a turn runs wait in one of two queues:
+ * - steering: injected at the next drain point, before the next model call ("change course")
+ * - follow_up: injected only when the model would otherwise stop ("do this next")
+ */
+export type QueuedKind = "steering" | "follow_up"
 
 export type TurnEvent =
   | { type: "model_started" }
@@ -23,6 +31,8 @@ export type TurnEvent =
   | { type: "tool_finished"; callId: string; output: string; summary: string }
   | { type: "tool_failed"; callId: string; error: string }
   | { type: "assistant_finished"; text: string }
+  /** A message the user typed mid-turn has just been added to the model context. */
+  | { type: "message_injected"; kind: QueuedKind; text: string }
   | { type: "turn_failed"; message: string }
 
 export type RunTurnOptions = {
@@ -32,6 +42,10 @@ export type RunTurnOptions = {
   rootDir: string
   onEvent: (event: TurnEvent) => void
   maxProviderCalls?: number
+  /** Called at a drain point. Returns the queued steering messages and empties the queue. */
+  takeSteering?: () => string[]
+  /** Called when the model would otherwise stop. Returns the queued follow-ups and empties the queue. */
+  takeFollowUp?: () => string[]
   /** Injectable for tests; defaults to the local read_file tool. */
   executeReadFile?: (rawArguments: string, rootDir: string) => Promise<ToolResult>
   /** Injectable for tests; defaults to the sandboxed bash tool. */
@@ -135,15 +149,23 @@ async function runToolCalls(
 
 /** Answer each call with its output, in call order. call_id is what links an output to its call. */
 function appendToolOutputs(
-  context: ModelInputItem[],
-  calls: ParsedFunctionCall[],
-  results: ToolResult[],
+  context: readonly ModelInputItem[],
+  calls: readonly ParsedFunctionCall[],
+  results: readonly ToolResult[],
 ): ModelInputItem[] {
-  let next = context
-  calls.forEach((call, index) => {
-    next = appendFunctionCallOutput(next, call.callId, results[index]!.output)
-  })
-  return next
+  const outputs = calls.map((call, index) => createFunctionCallOutput(call.callId, results[index]!.output))
+  return [...context, ...outputs]
+}
+
+/** Drain-all: every queued message becomes its own user message, in the order it was typed. */
+function appendQueuedMessages(
+  context: readonly ModelInputItem[],
+  kind: QueuedKind,
+  texts: readonly string[],
+  onEvent: (event: TurnEvent) => void,
+): ModelInputItem[] {
+  texts.forEach((text) => onEvent({ type: "message_injected", kind, text })) // the side effect
+  return appendUserMessages(context, texts) // the pure part
 }
 
 /**
@@ -159,6 +181,8 @@ export async function runTurn({
   rootDir,
   onEvent,
   maxProviderCalls = MAX_PROVIDER_CALLS,
+  takeSteering = () => [],
+  takeFollowUp = () => [],
   executeReadFile = defaultExecuteReadFile,
   executeBash = defaultExecuteBash,
 }: RunTurnOptions): Promise<RunTurnResult> {
@@ -168,7 +192,9 @@ export async function runTurn({
   }
   let context = appendUserMessage(initialContext, prompt)
 
-  for (let providerCalls = 0; providerCalls < maxProviderCalls; providerCalls += 1) {
+  let providerCalls = 0
+  while (providerCalls < maxProviderCalls) {
+    providerCalls += 1
     onEvent({ type: "model_started" })
 
     let result
@@ -194,10 +220,29 @@ export async function runTurn({
     if (calls.length > 0) {
       const results = await runToolCalls(calls, tools, rootDir, onEvent)
       context = appendToolOutputs(context, calls, results)
+
+      // Drain point 1: every call now has its output, so a user message cannot split a call from its answer.
+      context = appendQueuedMessages(context, "steering", takeSteering(), onEvent)
       continue
     }
 
     onEvent({ type: "assistant_finished", text: result.text })
+
+    // Drain point 2: the model would stop here. Steering typed during the last call still applies.
+    const steering = takeSteering()
+    if (steering.length > 0) {
+      context = appendQueuedMessages(context, "steering", steering, onEvent)
+      continue
+    }
+
+    // A follow-up starts new work, so it gets a fresh provider-call budget.
+    const followUps = takeFollowUp()
+    if (followUps.length > 0) {
+      context = appendQueuedMessages(context, "follow_up", followUps, onEvent)
+      providerCalls = 0
+      continue
+    }
+
     return { context }
   }
 
