@@ -4,7 +4,7 @@ import { useCallback, useMemo, useRef, useState } from "react"
 import { runTurn, type QueuedKind, type TurnEvent } from "./agent-loop.js"
 import { createJsonlSink } from "./logging/jsonl.js"
 import { createInitialModelContext } from "./model-context.js"
-import { createOpenAIClient } from "./openai/client.js"
+import { createOpenAIClient, OPENAI_MODEL, OPENAI_REASONING_EFFORT } from "./openai/client.js"
 import { SANDBOX_EXEC } from "./sandbox.js"
 import type { ModelInputItem, OpenAIClient, OpenAIWideEvent } from "./openai/types.js"
 
@@ -23,8 +23,10 @@ export type TranscriptItem =
       output?: string
     }
 
-/** A message typed while a turn runs. It leaves this list when the loop injects it. */
+/** Pending until the loop injects it. */
 export type QueuedMessage = { id: string; kind: QueuedKind; text: string }
+
+export type ModelInfo = { name: string; effort: string }
 
 export type Usage = {
   inputTokens: number
@@ -38,9 +40,17 @@ type HarnessViewProps = {
   items: readonly TranscriptItem[]
   busy: boolean
   usage: Usage
+  model?: ModelInfo
   queued?: readonly QueuedMessage[]
-  /** Enter sends a follow_up; Ctrl+S sends steering. When idle both just start a turn. */
+  /** Enter sends a follow_up, Ctrl+S sends steering. Both start a turn when idle. */
   onSubmit: (prompt: string, kind: QueuedKind) => void
+}
+
+function headerText(model: ModelInfo | undefined, busy: boolean): string {
+  const parts = ["AI harness"]
+  if (model !== undefined) parts.push(model.name, `effort ${model.effort}`)
+  if (busy) parts.push("running")
+  return parts.join(" · ")
 }
 
 function toolExpanded(
@@ -113,7 +123,7 @@ function TranscriptRow({
   }
 }
 
-export function HarnessView({ items, busy, usage, queued = [], onSubmit }: HarnessViewProps) {
+export function HarnessView({ items, busy, usage, model, queued = [], onSubmit }: HarnessViewProps) {
   const [draft, setDraft] = useState("")
   const [focus, setFocus] = useState<FocusTarget>("prompt")
   const [expandedCallIds, setExpandedCallIds] = useState<ReadonlySet<string>>(() => new Set())
@@ -149,7 +159,7 @@ export function HarnessView({ items, busy, usage, queued = [], onSubmit }: Harne
   )
 
   useKeyboard((key) => {
-    // Works while a turn runs: this is how you steer. Enter (below, on the input) queues a follow-up.
+    // Ctrl+S steers. Enter (on the input) queues a follow-up.
     if (key.ctrl && key.name === "s") {
       submit("steering")
       return
@@ -174,7 +184,7 @@ export function HarnessView({ items, busy, usage, queued = [], onSubmit }: Harne
 
   return (
     <box style={{ flexDirection: "column", padding: 1 }}>
-      <text content={busy ? "AI harness · running" : "AI harness"} style={{ fg: "#8fbcff" }} />
+      <text content={headerText(model, busy)} style={{ fg: "#8fbcff" }} />
 
       <scrollbox
         flexGrow={1}
@@ -230,17 +240,18 @@ const EMPTY_USAGE: Usage = { inputTokens: 0, outputTokens: 0, costUsd: 0 }
 
 type AppProps = {
   client: OpenAIClient
+  model?: ModelInfo
 }
 
-export function App({ client }: AppProps) {
+export function App({ client, model }: AppProps) {
   const [items, setItems] = useState<TranscriptItem[]>([])
   const [queued, setQueued] = useState<QueuedMessage[]>([])
   const [busy, setBusy] = useState(false)
   const [usage, setUsage] = useState(EMPTY_USAGE)
   const nextId = useRef(0)
-  // Model context is provider input state, not UI transcript state.
+  // Provider input state, not UI state.
   const modelContext = useRef<ModelInputItem[]>(createInitialModelContext())
-  // The loop reads these queues at its drain points. `queued` (state) is only what the UI shows.
+  // The loop drains these; the `queued` state is only for display.
   const busyRef = useRef(false)
   const queues = useRef<Record<QueuedKind, string[]>>({ steering: [], follow_up: [] })
 
@@ -314,7 +325,6 @@ export function App({ client }: AppProps) {
             ])
             return
           case "message_injected":
-            // It stops being pending and joins the conversation at the point the model saw it.
             nextId.current += 1
             setQueued((current) => {
               const index = current.findIndex((message) => message.kind === event.kind)
@@ -363,8 +373,7 @@ export function App({ client }: AppProps) {
           busyRef.current = false
           setBusy(false)
 
-          // A turn that ended early (an error) can leave messages the loop never reached.
-          // Do not drop what the user typed: the oldest becomes the next prompt, the rest stay queued.
+          // A failed turn can leave queued messages unread; the oldest becomes the next prompt.
           const kind: QueuedKind | undefined = (["steering", "follow_up"] as const).find(
             (candidate) => queues.current[candidate].length > 0,
           )
@@ -393,7 +402,7 @@ export function App({ client }: AppProps) {
     [startTurn],
   )
 
-  return <HarnessView items={items} busy={busy} usage={usage} queued={queued} onSubmit={onSubmit} />
+  return <HarnessView items={items} busy={busy} usage={usage} model={model} queued={queued} onSubmit={onSubmit} />
 }
 
 if (import.meta.main) {
@@ -416,5 +425,5 @@ if (import.meta.main) {
   })
 
   const renderer = await createCliRenderer({ exitOnCtrlC: true })
-  createRoot(renderer).render(<App client={client} />)
+  createRoot(renderer).render(<App client={client} model={{ name: OPENAI_MODEL, effort: OPENAI_REASONING_EFFORT }} />)
 }

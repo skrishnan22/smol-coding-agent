@@ -12,11 +12,11 @@ import { BASH_TOOL, READ_FILE_TOOL } from "./tools.js"
 const RESPONSES_URL = "https://api.openai.com/v1/responses"
 
 export const OPENAI_MODEL = "gpt-5.6-luna"
-/**
- * Ceiling on tokens the model may generate per response. With reasoning off, all of it is
- * available for the answer and tool arguments. OpenCode defaults to the same 32_000.
- * You only pay for what is generated; a lower cap would just cut long answers and file writes short.
- */
+// Reasoning tokens count against MAX_OUTPUT_TOKENS.
+export const OPENAI_REASONING_EFFORT = "low"
+// With store:false, encrypted reasoning is what lets us resend reasoning items.
+export const OPENAI_INCLUDE = ["reasoning.encrypted_content"] as const
+/** Per-response ceiling, reasoning included. */
 export const MAX_OUTPUT_TOKENS = 32_000
 export const INPUT_USD_PER_MILLION_TOKENS = 0.2
 export const OUTPUT_USD_PER_MILLION_TOKENS = 1.2
@@ -25,7 +25,7 @@ const responseSchema = z.object({
   id: z.string(),
   status: z.enum(RESPONSE_STATUSES),
   output: z.array(z.unknown()),
-  // Present when status is "incomplete", e.g. { reason: "max_output_tokens" }.
+  // Set when status is "incomplete".
   incomplete_details: z.object({ reason: z.string() }).nullish(),
   usage: z.object({
     input_tokens: z.number().int().nonnegative(),
@@ -59,7 +59,8 @@ export function createOpenAIClient(options: OpenAIClientOptions): OpenAIClient {
         model: OPENAI_MODEL,
         input,
         tools: [READ_FILE_TOOL, BASH_TOOL],
-        reasoning: { effort: "none" },
+        reasoning: { effort: OPENAI_REASONING_EFFORT },
+        include: OPENAI_INCLUDE,
         store: false,
         parallel_tool_calls: true,
         max_output_tokens: MAX_OUTPUT_TOKENS,

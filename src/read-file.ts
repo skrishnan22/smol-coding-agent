@@ -12,9 +12,7 @@ const argumentsSchema = z
 
 export type ReadFileSuccess = {
   ok: true
-  /** JSON string sent back to the model as function_call_output. */
   output: string
-  /** One-line label for the UI card. */
   summary: string
   path: string
   bytes: number
@@ -22,7 +20,6 @@ export type ReadFileSuccess = {
 
 export type ReadFileFailure = {
   ok: false
-  /** Structured error JSON still returned to the model. */
   output: string
   error: string
 }
@@ -30,7 +27,6 @@ export type ReadFileFailure = {
 export type ReadFileResult = ReadFileSuccess | ReadFileFailure
 
 export type ReadFileOptions = {
-  /** Startup directory the relative path is rooted at. */
   rootDir: string
 }
 
@@ -42,10 +38,6 @@ function failure(error: string): ReadFileFailure {
   }
 }
 
-/**
- * Validate and read one relative UTF-8 file under rootDir.
- * Returns a model-facing JSON string for both success and failure.
- */
 export async function readFile(rawArguments: string, options: ReadFileOptions): Promise<ReadFileResult> {
   let parsedArgs: unknown
   try {

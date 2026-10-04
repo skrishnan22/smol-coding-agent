@@ -25,7 +25,6 @@ function textResponse(text: string) {
   }
 }
 
-/** A real client whose network is a script. Records every request body. */
 function scriptedClient(responses: unknown[]) {
   const requests: { input: Record<string, unknown>[]; parallel_tool_calls: boolean }[] = []
   const client = createOpenAIClient({
@@ -66,7 +65,7 @@ const tags = (events: TurnEvent[]) =>
 const outputIds = (input: Record<string, unknown>[]) =>
   input.filter((item) => item.type === "function_call_output").map((item) => item.call_id)
 
-/** An executor that takes `ms` and records when it ran. */
+/** Takes `ms` and logs when it ran. */
 function slow(ms: number, log: { id: string; start: number; end: number }[]) {
   return async (rawArguments: string): Promise<ToolResult> => {
     const id = JSON.parse(rawArguments).path ?? JSON.parse(rawArguments).command
@@ -89,7 +88,7 @@ test("two real read_file calls run together and both outputs go back in call ord
   const { events } = await run(client)
 
   expect(requests[0]?.parallel_tool_calls).toBe(true)
-  // Both cards start before either finishes.
+  // Both start before either finishes.
   expect(tags(events).slice(0, 2)).toEqual(["tool_started:call_a", "tool_started:call_b"])
   expect(outputIds(requests[1]!.input)).toEqual(["call_a", "call_b"])
 
@@ -129,7 +128,7 @@ test("safe calls overlap in time, and results keep call order even when the seco
     executeReadFile: (raw) => (JSON.parse(raw).path === "fast" ? slow(30, log)(raw) : slowRead(raw)),
   })
 
-  expect(performance.now() - startedAt).toBeLessThan(450) // together ~300ms; one by one would be ~330ms+ per call chain
+  expect(performance.now() - startedAt).toBeLessThan(450) // together ~300ms, not ~600ms
   const slowRun = log.find((entry) => entry.id === "slow")!
   const fastRun = log.find((entry) => entry.id === "fast")!
   expect(fastRun.start).toBeLessThan(slowRun.end) // overlapped

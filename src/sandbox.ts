@@ -5,39 +5,30 @@ export const SANDBOX_EXEC = "/usr/bin/sandbox-exec"
 export const BASH_TIMEOUT_MS = 30_000
 export const MAX_STREAM_BYTES = 16 * 1024
 
-/** How long to keep draining pipes after bash exits (background jobs can hold them open). */
+// Background jobs can hold the pipes open after bash exits.
 const PIPE_GRACE_MS = 200
 
 export type ProfileOptions = {
-  /** Resolved project directory. Writable. */
   rootDir: string
-  /** Resolved temp directory. Writable. */
   tmpDir: string
-  /** Resolved home directory. Credential paths under it are unreadable. */
   home: string
 }
 
-/** SBPL string literal: only backslash and double quote need escaping. */
+/** Only backslash and double quote need escaping in an SBPL string. */
 function sbpl(value: string): string {
   return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`
 }
 
-/**
- * Seatbelt profile. Starts from allow-default and subtracts, because a
- * deny-default profile would have to list every system library bash needs.
- * Rule order matters: the last matching rule wins.
- */
+/** Allow everything, then subtract. The last matching rule wins, so order matters. */
 export function buildProfile({ rootDir, tmpDir, home }: ProfileOptions): string {
   return [
     "(version 1)",
     "(allow default)",
-    // No writes anywhere...
     "(deny file-write*)",
-    // ...except the project, temp, and /dev/null. /dev/tty is deliberately absent:
-    // programs that open the terminal directly (editors) fail instead of grabbing the TUI.
+    // /dev/tty is left out on purpose: editors that open the terminal should fail, not take over the TUI.
     `(allow file-write* (subpath ${sbpl(rootDir)}) (subpath ${sbpl(tmpDir)}) (literal "/dev/null"))`,
     "(deny network*)",
-    // Reads are open except credentials. The allow after the deny re-opens .env.example.
+    // .env.example is re-allowed after the .env* deny.
     `(deny file-read* (subpath ${sbpl(`${home}/.ssh`)}) (subpath ${sbpl(`${home}/.aws`)}) (regex #"/\\.env(\\..*)?$"))`,
     `(allow file-read* (literal ${sbpl(`${rootDir}/.env.example`)}))`,
   ].join("\n")
@@ -45,7 +36,7 @@ export function buildProfile({ rootDir, tmpDir, home }: ProfileOptions): string 
 
 export type SandboxOptions = {
   rootDir: string
-  /** Defaults to the real home directory. Tests pass a temp one. */
+  /** Tests pass a temp home. */
   home?: string
   timeoutMs?: number
   maxStreamBytes?: number
@@ -59,7 +50,7 @@ export type RawRun = {
   timedOut: boolean
 }
 
-/** Keep the first `max` bytes of a stream; keep draining so the child never blocks on a full pipe. */
+/** Keeps the first `max` bytes and keeps draining, so the child never blocks on a full pipe. */
 function capture(stream: ReadableStream<Uint8Array>, max: number) {
   const chunks: Uint8Array[] = []
   let size = 0
@@ -92,7 +83,6 @@ function capture(stream: ReadableStream<Uint8Array>, max: number) {
   }
 }
 
-/** Run one command in a fresh `bash -c` under the Seatbelt profile. Throws if it cannot spawn. */
 export async function runSandboxed(command: string, options: SandboxOptions): Promise<RawRun> {
   const rootDir = await realpath(options.rootDir)
   const tmpDir = await realpath(tmpdir())
@@ -102,11 +92,11 @@ export async function runSandboxed(command: string, options: SandboxOptions): Pr
 
   const proc = Bun.spawn([SANDBOX_EXEC, "-p", buildProfile({ rootDir, tmpDir, home }), "/bin/bash", "-c", command], {
     cwd: rootDir,
-    // /dev/null: reads return EOF at once, so `cat` with no file exits instead of hanging.
+    // stdin is /dev/null, so a bare `cat` gets EOF instead of hanging.
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
-    // Allowlist, not inherit: the parent's env holds OPENAI_API_KEY.
+    // Allowlist: the parent's env holds OPENAI_API_KEY.
     env: {
       PATH: process.env.PATH ?? "/usr/bin:/bin:/usr/sbin:/sbin",
       HOME: home,
@@ -128,7 +118,7 @@ export async function runSandboxed(command: string, options: SandboxOptions): Pr
   await proc.exited
   clearTimeout(timer)
 
-  // A surviving grandchild (`sleep 100 &`) can hold the pipes open. Don't wait for them.
+  // A leftover grandchild (`sleep 100 &`) can keep the pipes open; don't wait for it.
   await Promise.race([Promise.all([out.done, err.done]), Bun.sleep(PIPE_GRACE_MS)])
   await Promise.all([out.cancel(), err.cancel()])
 

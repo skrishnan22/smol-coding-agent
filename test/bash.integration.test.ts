@@ -6,7 +6,7 @@ import { join } from "node:path"
 import { runBash } from "../src/bash.js"
 import { MAX_STREAM_BYTES } from "../src/sandbox.js"
 
-// These run the real sandbox-exec, so they only make sense on macOS.
+// Real sandbox-exec, so macOS only.
 const sandboxTest = process.platform === "darwin" ? test : test.skip
 
 let root: string

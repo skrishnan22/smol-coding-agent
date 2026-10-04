@@ -11,7 +11,7 @@ afterEach(() => {
   renderer = undefined
 })
 
-/** A model call the test resolves by hand, so the turn stays "running" while we type. */
+/** A model call the test resolves by hand. */
 function deferred() {
   let resolve!: (value: OpenAIResponse) => void
   let reject!: (reason: Error) => void
@@ -84,7 +84,6 @@ test("Enter while a turn runs queues a follow-up that the model sees once it wou
   await settle()
   expect(calls).toHaveLength(1)
 
-  // The turn is running. The prompt box still takes input.
   await type("then be brief")
   act(() => screen.mockInput.pressEnter())
   await settle()
@@ -92,9 +91,9 @@ test("Enter while a turn runs queues a follow-up that the model sees once it wou
   let frame = screen.captureCharFrame()
   expect(frame).toContain("QUEUED · follow-up")
   expect(frame).toContain("then be brief")
-  expect(calls).toHaveLength(1) // nothing was sent to the model yet
+  expect(calls).toHaveLength(1) // not sent yet
 
-  // The model finishes: the follow-up is injected and a second round starts.
+  // The model finishes; the follow-up is injected.
   pending[0]!.resolve(textResponse("Here is the explanation."))
   await settle()
 
@@ -130,7 +129,7 @@ test("Ctrl+S queues steering that goes in right after the tool output, before th
   expect(frame).toContain("QUEUED · steering")
   expect(frame).toContain("only summarize it")
 
-  // The model asks for a tool. The real read_file runs. Then steering drains.
+  // The model asks for a tool; steering drains after it runs.
   pending[0]!.resolve(readCallResponse())
   await settle()
 
@@ -177,7 +176,7 @@ test("a queued message is not lost when the turn fails: it becomes the next prom
   await settle()
   expect(screen.captureCharFrame()).toContain("QUEUED · follow-up")
 
-  // The provider call fails, so the loop never reaches a drain point.
+  // The call fails, so the loop never reaches a drain point.
   pending[0]!.reject(new Error("provider is down"))
   await settle()
 

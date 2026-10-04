@@ -26,10 +26,7 @@ const textResponse = (text: string) => ({
   usage: { input_tokens: 20, output_tokens: 4 },
 })
 
-/**
- * A real client whose network is a script. `typing(n)` runs while request n is in flight,
- * which is when a user would be typing into the prompt box.
- */
+/** Real client over a scripted network. `typing(n)` runs while request n is in flight. */
 function setup(responses: unknown[], typing: (request: number) => void = () => {}) {
   const requests: { input: Item[] }[] = []
   const client = createOpenAIClient({
@@ -62,7 +59,7 @@ function setup(responses: unknown[], typing: (request: number) => void = () => {
   return { requests, queues, events, run }
 }
 
-/** The shape of a request's input: roles for messages, types for everything else. */
+/** Roles for messages, types for everything else. */
 const shape = (input: Item[]) => input.map((item) => (item.type === "message" ? `${item.role}` : `${item.type}`))
 const userTexts = (input: Item[]) => input.filter((item) => item.role === "user").map((item) => item.content)
 const types = (events: TurnEvent[]) => events.map((event) => event.type)
@@ -77,7 +74,7 @@ test("steering typed during a model call is injected after the tool outputs, bef
 
   await t.run()
 
-  // Every function_call has its output before the user message, so no call is split from its answer.
+  // Every call has its output before the user message.
   expect(shape(t.requests[1]!.input)).toEqual([
     "developer",
     "user",
@@ -110,9 +107,9 @@ test("a follow-up waits until the model would stop, then starts another round", 
 
   const { context } = await t.run()
 
-  // Not injected after the tool call, so the model's second request has no follow-up in it...
+  // Not injected after the tool round...
   expect(userTexts(t.requests[1]!.input)).toEqual(["go"])
-  // ...but the third request has it, right after the assistant's answer.
+  // ...but is in the third request, right after the answer.
   expect(shape(t.requests[2]!.input).slice(-2)).toEqual(["assistant", "user"])
   expect(userTexts(t.requests[2]!.input)).toEqual(["go", "then summarize"])
 
@@ -133,7 +130,7 @@ test("drain-all: three queued follow-ups become three user messages in one reque
 
   await t.run()
 
-  expect(t.requests).toHaveLength(2) // one model call for the whole batch, not one per message
+  expect(t.requests).toHaveLength(2) // one call for the whole batch
   expect(shape(t.requests[1]!.input).slice(-4)).toEqual(["assistant", "user", "user", "user"])
   expect(userTexts(t.requests[1]!.input)).toEqual(["go", "A", "B", "C"])
 })
@@ -153,7 +150,7 @@ test("at the stop point, steering is injected first and the follow-up waits for 
 })
 
 test("a follow-up starts new work, so it gets a fresh provider-call budget", async () => {
-  // Budget of 2: the tool round uses both calls. Without the reset, the follow-up could never run.
+  // Budget of 2 is used up by the tool round; without the reset the follow-up could not run.
   const t = setup([toolResponse(readCall("call_a", "fixtures/hello.txt")), textResponse("one"), textResponse("two")], (n) => {
     if (n === 1) t.queues.follow_up.push("more")
   })

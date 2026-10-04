@@ -3,7 +3,6 @@ import { runTurn, type TurnEvent } from "../src/agent-loop.js"
 import { createInitialModelContext } from "../src/model-context.js"
 import { createOpenAIClient } from "../src/openai/client.js"
 
-/** A real client, a scripted network, and the real loop. Returns what happened. */
 async function runWith(body: unknown) {
   const client = createOpenAIClient({
     apiKey: "test-key",
@@ -44,7 +43,7 @@ test("a response cut off by the output limit fails the turn instead of passing a
   const failed = events.at(-1)
   expect(failed?.type === "turn_failed" && failed.message).toContain("cut off")
   expect(failed?.type === "turn_failed" && failed.message).toContain("max_output_tokens")
-  // Only the user message was added; the truncated answer is not in the context.
+  // The truncated answer is not kept.
   expect(context).toHaveLength(initialLength + 1)
 })
 

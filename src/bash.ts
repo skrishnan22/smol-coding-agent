@@ -12,11 +12,7 @@ function failure(error: string): ToolResult {
   return { ok: false, error, output: JSON.stringify({ error }) }
 }
 
-/**
- * Validate and run one shell command in the sandbox.
- * A command that ran is always `ok: true`, whatever its exit code: `tool_failed`
- * means the harness could not run it. Sandbox denials show up as stderr + exit code.
- */
+/** `ok: true` for any command that ran, whatever its exit code. `tool_failed` means it could not run. */
 export async function runBash(rawArguments: string, options: SandboxOptions): Promise<ToolResult> {
   let parsedArgs: unknown
   try {
